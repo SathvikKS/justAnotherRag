@@ -61,7 +61,7 @@ The FastAPI process does not ingest documents after enqueueing the task.
 `process_document_task(file_bytes, filename, group_id)` does:
 
 1. Instantiate `PyPDFParser`.
-2. Instantiate `SentenceTransformerEngine`.
+2. Retrieve the module-level cached `SentenceTransformerEngine` (lazily initialized on the first task run to avoid process-fork/CUDA issues and model reload overhead).
 3. Instantiate `LanceDBStore`.
 4. Extract text chunks from the PDF.
 5. Embed each chunk.

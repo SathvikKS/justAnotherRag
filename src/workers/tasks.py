@@ -14,10 +14,20 @@ celery_app = Celery(
 )
 
 
+_embedder = None
+
+
+def get_embedder() -> SentenceTransformerEngine:
+    global _embedder
+    if _embedder is None:
+        _embedder = SentenceTransformerEngine()
+    return _embedder
+
+
 @celery_app.task(name="src.workers.tasks.process_document_task")
 def process_document_task(file_bytes: bytes, filename: str, group_id: str) -> dict:
     parser = PyPDFParser()
-    embedder = SentenceTransformerEngine()
+    embedder = get_embedder()
     store = LanceDBStore()
 
     parsed_chunks = parser.extract_text(file_bytes, filename)

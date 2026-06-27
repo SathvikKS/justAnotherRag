@@ -68,7 +68,28 @@ Terminal 2, Celery worker:
 uv run celery -A src.workers.tasks.celery_app worker --loglevel=info --pool=solo
 ```
 
-On Windows, keep `--pool=solo`. It avoids Celery multiprocessing issues in local development.
+On Windows, keep `--pool=solo` for local development.
+
+### Celery Concurrency & Pools (Windows vs. Production)
+
+Understanding how the background tasks run and scale depending on your OS and environment:
+
+#### 1. Windows Local Development (`--pool=solo`)
+* **Why:** Python's process-spawning (`prefork`) pool in Celery is buggy and unstable on Windows. Using `--pool=solo` runs the worker in a single process, single-threaded execution model.
+* **Concurrency:** Strictly sequential (1 task at a time). Setting `--concurrency` / `-c` has no effect.
+* **Testing Concurrency on Windows:** If you want to test concurrent task execution on Windows:
+  * **Option A (Multiple Workers):** Open multiple separate terminals and run workers with unique names:
+    ```powershell
+    uv run celery -A src.workers.tasks.celery_app worker --loglevel=info --pool=solo -n worker1@%h
+    ```
+  * **Option B (Thread Pool):** Run with `--pool=threads --concurrency=4`. Note that CPU-bound embedding generation will be throttled by Python's GIL, but it lets you test concurrent task routing.
+  * **Option C (Docker/WSL2):** Run the API and Celery worker inside Docker or WSL2 to run a native Linux environment.
+
+#### 2. Production Environment (`--pool=prefork`)
+* **Why:** In production (on Linux or Docker containers), use the default `prefork` pool.
+* **Concurrency:** Set `--concurrency=X` (typically matching the CPU core count). This spawns `X` independent worker processes.
+* **GIL Bypass:** Because it uses separate processes rather than threads, it bypasses Python's Global Interpreter Lock (GIL). Multiple PDF extraction and embedding tasks will execute in true, 100% parallel speed.
+* **Fault Isolation:** If a CPU-intensive C-library (e.g. PDF parser) encounters a hard crash, only that child process terminates. Celery automatically replaces it with a new process, keeping the worker online.
 
 ## Health Checks
 
