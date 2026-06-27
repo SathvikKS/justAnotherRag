@@ -1,6 +1,6 @@
 # Local RAG
 
-Local RAG API for PDF ingestion and document search. It uses FastAPI for HTTP, Celery for background ingestion, Redis as broker/result backend, SentenceTransformers for embeddings, and LanceDB for local hybrid vector plus full-text search.
+Local RAG app for PDF ingestion and document search. It uses FastAPI for HTTP, Celery for background ingestion, Redis as broker/result backend, SentenceTransformers for embeddings, LanceDB for hybrid vector plus full-text search, and a Vite React client.
 
 ## What Works Today
 
@@ -12,6 +12,9 @@ Local RAG API for PDF ingestion and document search. It uses FastAPI for HTTP, C
 - Store chunks in LanceDB with filename, page, group, text, vector, and chunk id.
 - Search with LanceDB hybrid vector plus text search, prefiltered by `group_id`.
 - Poll Celery task status by task id.
+- Use the React client to upload PDFs, watch ingestion status, and query a group.
+- Run the API, Redis, worker, and web client through Docker Compose.
+- Point LanceDB at S3-style object storage with AWS credentials from the environment.
 - Optional local `llama-cpp-python` engine exists behind `LlamaCPPEngine`, but `/chat` currently returns retrieved chunks, not generated answers.
 
 ## Docs
@@ -25,13 +28,22 @@ Local RAG API for PDF ingestion and document search. It uses FastAPI for HTTP, C
 Create `.env`:
 
 ```env
-LANCEDB_URI=./lancedb_data
+LANCEDB_URI=s3://app-vector-bucket
 LANCEDB_TABLE=document_chunks
 EMBEDDING_MODEL=BAAI/bge-small-en-v1.5
 CELERY_BROKER_URL=redis://:redis_password@localhost:6379/0
 CELERY_RESULT_BACKEND=redis://:redis_password@localhost:6379/0
 LLAMA_MODEL_PATH=model.gguf
+CORS_ORIGINS=http://localhost:3000,http://localhost:5173
+AWS_ACCESS_KEY_ID=
+AWS_SECRET_ACCESS_KEY=
+AWS_SESSION_TOKEN=
+AWS_REGION=us-east-1
+AWS_ENDPOINT_URL=
+VITE_API_BASE_URL=http://localhost:8000
 ```
+
+For local filesystem LanceDB storage, set `LANCEDB_URI=./lancedb_data`.
 
 For Redis without a password, use:
 
@@ -57,6 +69,29 @@ uv run celery -A src.workers.tasks.celery_app worker --loglevel=info --pool=solo
 ```
 
 `uvicorn` alone is not enough. Uploads are queued into Redis; the Celery worker does the actual PDF parsing, embedding, and LanceDB writes.
+
+Start the web client in a third terminal:
+
+```powershell
+cd rag-web
+npm run dev
+```
+
+Open `http://localhost:5173`.
+
+## Run With Docker Compose
+
+```powershell
+docker compose up --build
+```
+
+Services:
+
+- API: `http://localhost:8000`
+- Web client: `http://localhost:3000`
+- Redis: `localhost:6379`
+
+The worker service includes an NVIDIA GPU reservation. On CPU-only Docker hosts, remove the `ai_worker.deploy.resources.reservations.devices` block.
 
 ## Use The API
 

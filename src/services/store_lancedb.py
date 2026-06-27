@@ -23,8 +23,11 @@ class LanceDBStore(VectorStoreBase):
         self,
         uri: str = settings.lancedb_uri,
         table_name: str = settings.lancedb_table,
+        storage_options: dict[str, str] | None = None,
     ):
-        self.db = lancedb.connect(uri)
+        if storage_options is None and str(uri).startswith("s3://"):
+            storage_options = settings.lancedb_storage_options
+        self.db = lancedb.connect(uri, storage_options=storage_options)
         self.table_name = table_name
         self.table = self._get_or_create_table()
         self._ensure_fts_index()

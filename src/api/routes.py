@@ -1,16 +1,25 @@
 import re
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator
 
 from src.api.dependencies import (
     get_embedding_engine,
     get_vector_store,
 )
+from src.core.config import settings
 from src.core.interfaces import EmbeddingEngineBase, VectorStoreBase
 from src.workers.tasks import process_document_task
 
 app = FastAPI(title="Local RAG API")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors_origin_list,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 GROUP_ID_REGEX = re.compile(r"^[A-Za-z0-9_.-]+$")
 

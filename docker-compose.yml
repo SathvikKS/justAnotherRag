@@ -1,5 +1,69 @@
 services:
+  api_gateway:
+    build: .
+    command: uvicorn src.api.routes:app --host 0.0.0.0 --port 8000
+    environment:
+      LANCEDB_URI: ${LANCEDB_URI:-s3://app-vector-bucket}
+      LANCEDB_TABLE: ${LANCEDB_TABLE:-document_chunks}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-BAAI/bge-small-en-v1.5}
+      CELERY_BROKER_URL: redis://redis_broker:6379/0
+      CELERY_RESULT_BACKEND: redis://redis_broker:6379/0
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://localhost:5173}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      AWS_ENDPOINT_URL: ${AWS_ENDPOINT_URL:-}
+    ports:
+      - "8000:8000"
+    volumes:
+      - lancedb_data:/app/lancedb_data
+      - hf_cache:/root/.cache/huggingface
+    depends_on:
+      - redis_broker
+
   redis_broker:
     image: redis:alpine
     ports:
       - "6379:6379"
+
+  ai_worker:
+    build: .
+    command: celery -A src.workers.tasks.celery_app worker --loglevel=info
+    environment:
+      LANCEDB_URI: ${LANCEDB_URI:-s3://app-vector-bucket}
+      LANCEDB_TABLE: ${LANCEDB_TABLE:-document_chunks}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-BAAI/bge-small-en-v1.5}
+      CELERY_BROKER_URL: redis://redis_broker:6379/0
+      CELERY_RESULT_BACKEND: redis://redis_broker:6379/0
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      AWS_ENDPOINT_URL: ${AWS_ENDPOINT_URL:-}
+    depends_on:
+      - redis_broker
+    volumes:
+      - lancedb_data:/app/lancedb_data
+      - hf_cache:/root/.cache/huggingface
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  web_client:
+    build:
+      context: ./rag-web
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8000}
+    ports:
+      - "3000:80"
+    depends_on:
+      - api_gateway
+
+volumes:
+  lancedb_data:
+  hf_cache:

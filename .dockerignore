@@ -1,0 +1,10 @@
+.git
+.venv
+.pytest_cache
+.test_lancedb
+__pycache__
+*.pyc
+.env
+lancedb_data
+rag-web/node_modules
+rag-web/dist

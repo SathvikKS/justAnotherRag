@@ -5,23 +5,33 @@ Operational notes for the current local app.
 ## Prerequisites
 
 - Python managed by `uv`
+- Node.js/npm for local frontend development
+- Docker Compose for containerized runs
 - Redis on port `6379`
 - A `.env` file in the repo root
 - Two long-running processes for normal use:
   - FastAPI API server
   - Celery worker
+- Optional third process for the Vite frontend dev server
 
 ## Environment
 
 Password-protected Redis:
 
 ```env
-LANCEDB_URI=./lancedb_data
+LANCEDB_URI=s3://app-vector-bucket
 LANCEDB_TABLE=document_chunks
 EMBEDDING_MODEL=BAAI/bge-small-en-v1.5
 CELERY_BROKER_URL=redis://:redis_password@localhost:6379/0
 CELERY_RESULT_BACKEND=redis://:redis_password@localhost:6379/0
 LLAMA_MODEL_PATH=model.gguf
+CORS_ORIGINS=http://localhost:3000,http://localhost:5173
+AWS_ACCESS_KEY_ID=
+AWS_SECRET_ACCESS_KEY=
+AWS_SESSION_TOKEN=
+AWS_REGION=us-east-1
+AWS_ENDPOINT_URL=
+VITE_API_BASE_URL=http://localhost:8000
 ```
 
 Redis without password:
@@ -33,9 +43,15 @@ CELERY_RESULT_BACKEND=redis://localhost:6379/0
 
 The API and worker both read `.env`, so restart both after editing it.
 
+For local filesystem LanceDB storage, set:
+
+```env
+LANCEDB_URI=./lancedb_data
+```
+
 ## Redis
 
-The repo has a minimal `docker-compose.yml` with a non-password Redis service named `redis_broker`.
+The repo `docker-compose.yml` includes a non-password Redis service named `redis_broker`.
 
 If using an existing password-protected Redis, this kind of compose service is also valid:
 
@@ -54,6 +70,36 @@ services:
 
 Use only one Redis service on port `6379`.
 
+## Docker Compose
+
+Start the full stack:
+
+```powershell
+docker compose up --build
+```
+
+Endpoints:
+
+- API: `http://localhost:8000`
+- Web client: `http://localhost:3000`
+- Redis: `localhost:6379`
+
+The compose API and worker services use `redis://redis_broker:6379/0` inside the Docker network. Do not set container Celery URLs to `localhost`.
+
+The worker includes an NVIDIA GPU reservation:
+
+```yaml
+deploy:
+  resources:
+    reservations:
+      devices:
+        - driver: nvidia
+          count: all
+          capabilities: [gpu]
+```
+
+On CPU-only Docker hosts, remove that block before running compose.
+
 ## Start The App
 
 Terminal 1, API:
@@ -69,6 +115,15 @@ uv run celery -A src.workers.tasks.celery_app worker --loglevel=info --pool=solo
 ```
 
 On Windows, keep `--pool=solo` for local development.
+
+Terminal 3, frontend:
+
+```powershell
+cd rag-web
+npm run dev
+```
+
+Open `http://localhost:5173`.
 
 ### Celery Concurrency & Pools (Windows vs. Production)
 
@@ -175,13 +230,19 @@ Worker failure after task starts:
 
 ## LanceDB Data
 
-Default local data path:
+Default phase 4 storage URI:
+
+```text
+s3://app-vector-bucket
+```
+
+Local data path when `LANCEDB_URI=./lancedb_data`:
 
 ```text
 ./lancedb_data
 ```
 
-This directory is ignored by git.
+This directory is ignored by git. In Docker, it is mounted through the `lancedb_data` volume.
 
 To reset local indexed data, stop API/worker first, then remove `lancedb_data`.
 

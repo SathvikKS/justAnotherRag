@@ -5,3 +5,6 @@ __pycache__/
 .env
 .gitnexus
 .test_lancedb/
+rag-web/node_modules/
+rag-web/dist/
+rag-web/vite-dev.*

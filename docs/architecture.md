@@ -13,6 +13,10 @@ This is the current implemented architecture. It is not a future phase plan.
 - `src/api/dependencies.py`: FastAPI dependency providers for parser, embedder, and vector store.
 - `src/api/routes.py`: FastAPI app and HTTP endpoints.
 - `src/workers/tasks.py`: Celery app and document ingestion task.
+- `rag-web/`: Vite React client using the shadcn scaffold.
+- `Dockerfile`: shared Python image for the API and Celery worker.
+- `rag-web/Dockerfile`: React build served by Nginx.
+- `docker-compose.yml`: API, Redis, worker, and web client orchestration.
 - `tests/`: route, worker, and LanceDB tests.
 - `docs/`: internal docs and runbook.
 
@@ -32,12 +36,14 @@ Routes and workers should use these boundaries conceptually. Concrete vendor cod
 
 Settings live in `src/core/config.py`:
 
-- `lancedb_uri`: defaults to `./lancedb_data`
+- `lancedb_uri`: defaults to `s3://app-vector-bucket`
 - `lancedb_table`: defaults to `document_chunks`
 - `embedding_model`: defaults to `BAAI/bge-small-en-v1.5`
 - `celery_broker_url`: defaults to `redis://localhost:6379/0`
 - `celery_result_backend`: defaults to `redis://localhost:6379/0`
 - `llama_model_path`: defaults to `model.gguf`
+- `cors_origins`: comma-separated browser origins for FastAPI CORS
+- `aws_access_key_id`, `aws_secret_access_key`, `aws_session_token`, `aws_region`, `aws_endpoint_url`: optional LanceDB S3 storage options
 
 The API and worker must load the same Celery broker and result backend URLs.
 
@@ -115,7 +121,13 @@ If no extractable text exists, parser raises `ValueError("No extractable text fo
 - `filename: str`
 - `page: int | None`
 
-`LanceDBStore` connects to `settings.lancedb_uri`, opens or creates `settings.lancedb_table`, and ensures an FTS index on `text`.
+`LanceDBStore` connects to `settings.lancedb_uri`, passes optional AWS-backed `storage_options`, opens or creates `settings.lancedb_table`, and ensures an FTS index on `text`.
+
+For local development without object storage, set:
+
+```env
+LANCEDB_URI=./lancedb_data
+```
 
 Search uses LanceDB hybrid query:
 
@@ -132,6 +144,8 @@ If `group_id` is provided, the store validates it and applies:
 The regex guard is required because the filter is string formatted.
 
 ## API Endpoints
+
+The FastAPI app enables CORS for `settings.cors_origins`, which defaults to the Docker Nginx client on `http://localhost:3000` and Vite dev server on `http://localhost:5173`.
 
 `POST /upload`
 
@@ -172,6 +186,27 @@ It lazy-imports `llama_cpp` and raises a clear runtime error if the optional `ll
 
 Current `/chat` returns retrieved LanceDB chunks only.
 
+## Frontend Client
+
+`rag-web/src/App.tsx` calls the existing API:
+
+- `POST /upload` with multipart `file` and `group_id`
+- `GET /status/{task_id}` in a polling loop until Celery reaches a terminal state
+- `POST /chat` with `query`, `group_id`, and `limit`
+
+The client reads `VITE_API_BASE_URL` at build time and defaults to `http://localhost:8000`.
+
+## Docker Compose
+
+`docker-compose.yml` defines four services:
+
+- `api_gateway`: shared Python image, exposes port `8000`
+- `redis_broker`: official `redis:alpine`, exposes port `6379`
+- `ai_worker`: shared Python image, runs Celery, includes an NVIDIA GPU reservation
+- `web_client`: builds `rag-web` and serves the static files with Nginx on port `3000`
+
+Compose hard-codes container Redis URLs to `redis://redis_broker:6379/0`; do not reuse localhost Redis URLs inside containers.
+
 ## Architectural Rules
 
 - Keep long-running ingestion in Celery, not FastAPI.
@@ -180,4 +215,5 @@ Current `/chat` returns retrieved LanceDB chunks only.
 - Keep API and worker Celery URLs aligned.
 - Keep the LanceDB vector dimension and embedding model dimension aligned.
 - Keep `group_id` validation before LanceDB filtering.
+- Keep browser CORS origins explicit.
 - Update `README.md` and `docs/` when setup, runtime flow, endpoints, or architecture changes.
