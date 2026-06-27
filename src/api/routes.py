@@ -1,18 +1,17 @@
 import re
 import uuid
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field, field_validator
 
-from src.services.embedder_sentence import SentenceTransformerEngine
-from src.services.parser_pypdf import PyPDFParser
-from src.services.store_lancedb import LanceDBStore
+from src.api.dependencies import (
+    get_document_parser,
+    get_embedding_engine,
+    get_vector_store,
+)
+from src.core.interfaces import DocumentParserBase, EmbeddingEngineBase, VectorStoreBase
 
 app = FastAPI(title="Local RAG API")
-
-parser = PyPDFParser()
-embedder = SentenceTransformerEngine()
-store = LanceDBStore()
 
 GROUP_ID_REGEX = re.compile(r"^[A-Za-z0-9_.-]+$")
 
@@ -39,7 +38,13 @@ class ChatResponse(BaseModel):
 
 
 @app.post("/upload")
-async def upload(file: UploadFile = File(...), group_id: str = Form(...)):
+async def upload(
+    file: UploadFile = File(...),
+    group_id: str = Form(...),
+    parser: DocumentParserBase = Depends(get_document_parser),
+    embedder: EmbeddingEngineBase = Depends(get_embedding_engine),
+    store: VectorStoreBase = Depends(get_vector_store),
+):
     if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(400, "Only PDF files are supported in Phase 1")
 
@@ -89,7 +94,11 @@ async def upload(file: UploadFile = File(...), group_id: str = Form(...)):
 
 
 @app.post("/chat", response_model=ChatResponse)
-def chat(payload: ChatRequest):
+def chat(
+    payload: ChatRequest,
+    embedder: EmbeddingEngineBase = Depends(get_embedding_engine),
+    store: VectorStoreBase = Depends(get_vector_store),
+):
     try:
         query_vector = embedder.embed_text(payload.query)
         results = store.search(

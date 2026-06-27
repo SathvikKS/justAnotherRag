@@ -27,6 +27,7 @@ class LanceDBStore(VectorStoreBase):
         self.db = lancedb.connect(uri)
         self.table_name = table_name
         self.table = self._get_or_create_table()
+        self._ensure_fts_index()
 
     def _get_or_create_table(self):
         try:
@@ -34,11 +35,23 @@ class LanceDBStore(VectorStoreBase):
         except Exception:
             return self.db.create_table(self.table_name, schema=DocumentChunk)
 
+    def _has_text_fts_index(self) -> bool:
+        return any(
+            getattr(index, "index_type", None) == "FTS"
+            and "text" in getattr(index, "columns", [])
+            for index in self.table.list_indices()
+        )
+
+    def _ensure_fts_index(self) -> None:
+        if not self._has_text_fts_index():
+            self.table.create_fts_index("text")
+
     def upsert(self, chunks: list[dict]) -> bool:
         if not chunks:
             return False
 
         self.table.add(chunks)
+        self._ensure_fts_index()
         return True
 
     def search(
@@ -48,7 +61,13 @@ class LanceDBStore(VectorStoreBase):
         group_id: str | None = None,
         limit: int = 5,
     ) -> list[dict]:
-        query = self.table.search(query_vector)
+        self._ensure_fts_index()
+
+        query = (
+            self.table.search(query_type="hybrid")
+            .vector(query_vector)
+            .text(query_text)
+        )
 
         if group_id:
             if not GROUP_ID_REGEX.match(group_id):
@@ -56,6 +75,6 @@ class LanceDBStore(VectorStoreBase):
                     f"Invalid group_id: {group_id!r}. "
                     "Must contain only letters, digits, underscores, dots, and hyphens."
                 )
-            query = query.where(f"group_id = '{group_id}'")
+            query = query.where(f"group_id = '{group_id}'", prefilter=True)
 
         return query.limit(limit).to_list()
