@@ -24,12 +24,12 @@ The Python side is a uv workspace with separate root services:
 
 ## Environment
 
-Each service owns its env file. Copy the service `.env.example` to `.env` inside the service directory you run from.
+Each service owns its env file. Copy the service `.env.example` to `.env` inside the service directory you run from. The API and ingestion entrypoints load their own service `.env` before shared settings are resolved, so `api/.env` and `ingestion/.env` remain the source of truth for `LANCEDB_URI`.
 
 Important defaults:
 
 ```env
-LANCEDB_URI=./lancedb_data
+LANCEDB_URI=../lancedb_data
 LANCEDB_TABLE=document_chunks
 EMBEDDING_MODEL=BAAI/bge-small-en-v1.5
 EMBEDDING_GRPC_URL=localhost:50051
@@ -40,7 +40,7 @@ CELERY_BROKER_URL=redis://localhost:6379/0
 CELERY_RESULT_BACKEND=redis://localhost:6379/0
 ```
 
-For local filesystem LanceDB storage, set `LANCEDB_URI=./lancedb_data`.
+For local filesystem LanceDB storage shared by API and ingestion, set `LANCEDB_URI=../lancedb_data` in both `api/.env` and `ingestion/.env`.
 
 If Redis requires a password, set the passworded `CELERY_BROKER_URL` and `CELERY_RESULT_BACKEND` in both `api/.env` and `ingestion/.env`.
 

@@ -1,11 +1,11 @@
 from sentence_transformers import SentenceTransformer
 
-from rag_core.config import settings
+from rag_core.config import get_settings
 
 
 class SentenceTransformerEngine:
-    def __init__(self, model_name: str = settings.embedding_model):
-        self.model = SentenceTransformer(model_name)
+    def __init__(self, model_name: str | None = None):
+        self.model = SentenceTransformer(model_name or get_settings().embedding_model)
 
     def embed_texts(self, texts: list[str]) -> list[list[float]]:
         vectors = self.model.encode(texts, normalize_embeddings=True)

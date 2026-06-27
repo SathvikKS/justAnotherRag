@@ -1,5 +1,7 @@
 import re
+from pathlib import Path
 
+from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator
@@ -10,8 +12,11 @@ from rag_api.dependencies import (
     get_llm_client,
     get_vector_store,
 )
-from rag_core.config import settings
+from rag_core.config import get_settings
 from rag_core.interfaces import EmbeddingEngineBase, LLMClientBase, VectorStoreBase
+
+load_dotenv(Path(__file__).resolve().parents[2] / ".env", encoding="utf-8-sig")
+settings = get_settings()
 
 app = FastAPI(title="Local RAG API")
 app.add_middleware(

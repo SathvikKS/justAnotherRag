@@ -1,3 +1,5 @@
+from functools import lru_cache
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -19,11 +21,7 @@ class Settings(BaseSettings):
     aws_region: str | None = None
     aws_endpoint_url: str | None = None
 
-    model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8",
-        extra="ignore",
-    )
+    model_config = SettingsConfigDict(extra="ignore")
 
     @property
     def cors_origin_list(self) -> list[str]:
@@ -48,5 +46,6 @@ class Settings(BaseSettings):
         }
         return options or None
 
-
-settings = Settings()
+@lru_cache(maxsize=1)
+def get_settings() -> Settings:
+    return Settings()

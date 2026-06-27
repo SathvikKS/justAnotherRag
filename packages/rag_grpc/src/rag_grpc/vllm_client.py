@@ -1,9 +1,9 @@
-from rag_core.config import settings
+from rag_core.config import get_settings
 
 
 class MockLlmGrpcClient:
-    def __init__(self, target: str = settings.llm_grpc_url):
-        self.target = target
+    def __init__(self, target: str | None = None):
+        self.target = target or get_settings().llm_grpc_url
 
     def generate_response(self, prompt: str, context: list[str]) -> str:
         import json
@@ -24,13 +24,14 @@ class MockLlmGrpcClient:
 class VllmGrpcClient:
     def __init__(
         self,
-        target: str = settings.llm_grpc_url,
-        model: str = settings.llm_model,
-        max_tokens: int = settings.llm_max_tokens,
+        target: str | None = None,
+        model: str | None = None,
+        max_tokens: int | None = None,
     ):
-        self.target = target
-        self.model = model
-        self.max_tokens = max_tokens
+        settings = get_settings()
+        self.target = target or settings.llm_grpc_url
+        self.model = model or settings.llm_model
+        self.max_tokens = max_tokens or settings.llm_max_tokens
 
     def generate_response(self, prompt: str, context: list[str]) -> str:
         # ponytail: vLLM's gRPC proto is owned by vLLM; keep imports lazy so API images do not install vLLM.

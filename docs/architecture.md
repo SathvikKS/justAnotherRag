@@ -57,7 +57,7 @@ Settings:
 
 `EMBEDDING_MODEL` must produce 384-dimensional vectors unless the LanceDB schema is changed.
 
-Local services read `.env` from their own service directory. Compose uses the same files via `env_file` and overrides container-only hostnames. Keep Redis URLs aligned between `api/.env` and `ingestion/.env`; examples live beside each service.
+Local services read `.env` from their own service directory. API and ingestion preload `api/.env` or `ingestion/.env` before shared `rag_core.config` settings are constructed, which avoids falling back to package defaults when those services import shared code. Compose uses the same files via `env_file` and overrides container-only hostnames. Keep Redis URLs aligned between `api/.env` and `ingestion/.env`; examples live beside each service.
 
 ## LanceDB
 

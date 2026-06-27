@@ -1,11 +1,16 @@
 import uuid
+from pathlib import Path
 
 from celery import Celery
+from dotenv import load_dotenv
 
-from rag_core.config import settings
+from rag_core.config import get_settings
 from rag_grpc import EmbeddingClient
 from rag_ingestion.parser_pypdf import PyPDFParser
 from rag_storage import LanceDBStore
+
+load_dotenv(Path(__file__).resolve().parents[2] / ".env", encoding="utf-8-sig")
+settings = get_settings()
 
 celery_app = Celery(
     "ingestion_worker",

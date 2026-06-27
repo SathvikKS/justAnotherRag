@@ -10,7 +10,7 @@
 
 ## Environment
 
-Each service reads `.env` from its own current directory. Copy each service's example when setting it up:
+Each service reads `.env` from its own current directory. API and ingestion also preload their service-local `.env` before importing shared settings so `LANCEDB_URI` does not fall back to package defaults. Copy each service's example when setting it up:
 
 - `api/.env.example` -> `api/.env`
 - `ingestion/.env.example` -> `ingestion/.env`
@@ -20,7 +20,7 @@ Each service reads `.env` from its own current directory. Copy each service's ex
 Shared values that must match:
 
 ```env
-LANCEDB_URI=./lancedb_data
+LANCEDB_URI=../lancedb_data
 LANCEDB_TABLE=document_chunks
 EMBEDDING_MODEL=BAAI/bge-small-en-v1.5
 EMBEDDING_GRPC_URL=localhost:50051

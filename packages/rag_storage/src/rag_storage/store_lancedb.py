@@ -3,7 +3,7 @@ import re
 import lancedb
 from lancedb.pydantic import LanceModel, Vector
 
-from rag_core.config import settings
+from rag_core.config import get_settings
 from rag_core.interfaces import VectorStoreBase
 
 GROUP_ID_REGEX = re.compile(r"^[A-Za-z0-9_.-]+$")
@@ -21,10 +21,13 @@ class DocumentChunk(LanceModel):
 class LanceDBStore(VectorStoreBase):
     def __init__(
         self,
-        uri: str = settings.lancedb_uri,
-        table_name: str = settings.lancedb_table,
+        uri: str | None = None,
+        table_name: str | None = None,
         storage_options: dict[str, str] | None = None,
     ):
+        settings = get_settings()
+        uri = uri or settings.lancedb_uri
+        table_name = table_name or settings.lancedb_table
         if storage_options is None and str(uri).startswith("s3://"):
             storage_options = settings.lancedb_storage_options
         self.db = lancedb.connect(uri, storage_options=storage_options)
