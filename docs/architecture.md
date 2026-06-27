@@ -22,7 +22,7 @@ Upload:
 1. `POST /upload` validates the PDF filename and `group_id`.
 2. API sends Celery task `rag_ingestion.tasks.process_document_task`.
 3. `ingestion_worker` parses PDF bytes with `PyPDFParser`.
-4. Worker sends all chunk texts to `embedding_service`.
+4. Worker sends chunk texts to `embedding_service` (batched in chunks of 128 to prevent gRPC message size limit exhaustion).
 5. Worker writes chunk records to LanceDB.
 6. `/status/{task_id}` reads Celery result state.
 

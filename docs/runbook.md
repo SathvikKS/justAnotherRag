@@ -189,6 +189,7 @@ Worker failure:
 - Image-only PDF with no extractable text.
 - Embedding model download/cache failure.
 - LanceDB write failure.
+- `RESOURCE_EXHAUSTED` (gRPC message larger than max 4MB). Resolved by batching embedding requests in chunks of 128 in `EmbeddingClient.embed_texts`.
 
 ## Tests
 

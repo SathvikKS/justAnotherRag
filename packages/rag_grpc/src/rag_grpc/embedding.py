@@ -24,19 +24,27 @@ class EmbeddingClient:
         return self.embed_texts([text])[0]
 
     def embed_texts(self, texts: list[str]) -> list[list[float]]:
+        if not texts:
+            return []
+
+        batch_size = 128
+        all_vectors = []
+
         with grpc.insecure_channel(self.target) as channel:
             call = channel.unary_unary(
                 EMBED_METHOD,
                 request_serializer=_dumps,
                 response_deserializer=_loads,
             )
-            body = call({"texts": texts})
+            for i in range(0, len(texts), batch_size):
+                batch = texts[i : i + batch_size]
+                body = call({"texts": batch})
+                all_vectors.extend(body["vectors"])
 
-        vectors = body["vectors"]
-        for vector in vectors:
+        for vector in all_vectors:
             if len(vector) != 384:
                 raise ValueError(f"Expected 384 dimensions, got {len(vector)}")
-        return [[float(x) for x in vector] for vector in vectors]
+        return [[float(x) for x in vector] for vector in all_vectors]
 
 
 def serve_embedding(
