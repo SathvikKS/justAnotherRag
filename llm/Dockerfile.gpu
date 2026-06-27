@@ -1,0 +1,7 @@
+FROM vllm/vllm-openai:latest
+
+WORKDIR /app
+ENV PYTHONPATH="/app/llm/src:${PYTHONPATH}"
+COPY llm ./llm
+
+CMD ["python", "-m", "rag_llm.serve"]

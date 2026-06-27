@@ -1,219 +1,99 @@
 # Architecture
 
-This is the current implemented architecture. It is not a future phase plan.
+This is the current implemented architecture.
 
-## Directory Map
+## Workspace
 
-- `src/core/interfaces.py`: abstract contracts for parser, embedder, vector store, and LLM worker.
-- `src/core/config.py`: Pydantic settings loaded from `.env`.
-- `src/services/parser_pypdf.py`: PDF text extraction and chunking.
-- `src/services/embedder_sentence.py`: SentenceTransformer embedding engine.
-- `src/services/store_lancedb.py`: LanceDB schema, upsert, FTS index creation, and hybrid search.
-- `src/services/llm_llamacpp.py`: optional llama.cpp-backed LLM engine.
-- `src/api/dependencies.py`: FastAPI dependency providers for parser, embedder, and vector store.
-- `src/api/routes.py`: FastAPI app and HTTP endpoints.
-- `src/workers/tasks.py`: Celery app and document ingestion task.
-- `rag-web/`: Vite React client using the shadcn scaffold.
-- `Dockerfile`: shared Python image for the API and Celery worker.
-- `rag-web/Dockerfile`: React build served by Nginx.
-- `docker-compose.yml`: API, Redis, worker, and web client orchestration.
-- `tests/`: route, worker, and LanceDB tests.
-- `docs/`: internal docs and runbook.
+- `api/src/rag_api`: FastAPI routes and HTTP dependency providers.
+- `ingestion/src/rag_ingestion`: Celery app, PDF parsing, ingestion task.
+- `embedding/src/rag_embedding`: SentenceTransformer engine and gRPC server.
+- `llm/src/rag_llm`: vLLM gRPC launcher and mock server.
+- `packages/rag_core`: settings and shared interfaces.
+- `packages/rag_storage`: LanceDB schema, upsert, FTS index, hybrid search.
+- `packages/rag_grpc`: embedding gRPC service/client and vLLM client shim.
+- `rag-web`: Vite React client.
 
-## Core Interfaces
+Root `pyproject.toml` is a uv workspace for the service apps and shared packages.
 
-`src/core/interfaces.py` defines the stable contracts:
+## Runtime Flow
 
-- `DocumentParserBase.extract_text(file_bytes, filename) -> list[dict]`
-- `EmbeddingEngineBase.embed_text(text) -> list[float]`
-- `VectorStoreBase.upsert(chunks) -> bool`
-- `VectorStoreBase.search(query_vector, query_text, group_id=None, limit=5) -> list[dict]`
-- `LLMWorkerBase.generate_response(prompt, context) -> str`
+Upload:
 
-Routes and workers should use these boundaries conceptually. Concrete vendor code belongs in `src/services/`.
+1. `POST /upload` validates the PDF filename and `group_id`.
+2. API sends Celery task `rag_ingestion.tasks.process_document_task`.
+3. `ingestion_worker` parses PDF bytes with `PyPDFParser`.
+4. Worker sends all chunk texts to `embedding_service`.
+5. Worker writes chunk records to LanceDB.
+6. `/status/{task_id}` reads Celery result state.
+
+Chat:
+
+1. `POST /chat` validates `query`, `group_id`, and `limit`.
+2. API embeds the query through `embedding_service`.
+3. API searches LanceDB through `LanceDBStore`.
+4. API sends the query and retrieved source text to `llm_service`.
+5. API returns `query`, `group_id`, `answer`, and `sources`.
+
+## Boundaries
+
+- API does not import SentenceTransformers, Torch, or vLLM.
+- Ingestion does not import SentenceTransformers or Torch.
+- Embedding service owns SentenceTransformers and the 384-dimension guard.
+- LLM service owns vLLM.
+- `LLM_PROVIDER=mock` routes API generation to the mock gRPC service for local dev.
+- LanceDB access lives in `rag_storage`.
+- Shared environment parsing lives in `rag_core.config`.
 
 ## Configuration
 
-Settings live in `src/core/config.py`:
+Settings:
 
-- `lancedb_uri`: defaults to `s3://app-vector-bucket`
-- `lancedb_table`: defaults to `document_chunks`
-- `embedding_model`: defaults to `BAAI/bge-small-en-v1.5`
-- `celery_broker_url`: defaults to `redis://localhost:6379/0`
-- `celery_result_backend`: defaults to `redis://localhost:6379/0`
-- `llama_model_path`: defaults to `model.gguf`
-- `cors_origins`: comma-separated browser origins for FastAPI CORS
-- `aws_access_key_id`, `aws_secret_access_key`, `aws_session_token`, `aws_region`, `aws_endpoint_url`: optional LanceDB S3 storage options
+- `LANCEDB_URI`, `LANCEDB_TABLE`
+- `EMBEDDING_MODEL`, `EMBEDDING_GRPC_URL`
+- `LLM_GRPC_URL`, `LLM_MODEL`, `LLM_MAX_TOKENS`
+- `CELERY_BROKER_URL`, `CELERY_RESULT_BACKEND`
+- `CORS_ORIGINS`
+- AWS credential fields for LanceDB S3 storage
 
-The API and worker must load the same Celery broker and result backend URLs.
+`EMBEDDING_MODEL` must produce 384-dimensional vectors unless the LanceDB schema is changed.
 
-## Upload Flow
+Local services read `.env` from their own service directory. Compose uses the same files via `env_file` and overrides container-only hostnames. Keep Redis URLs aligned between `api/.env` and `ingestion/.env`; examples live beside each service.
 
-1. `POST /upload` accepts multipart form data:
-   - `file`: required PDF file
-   - `group_id`: required string matching `^[A-Za-z0-9_.-]+$`
-2. The route validates filename and `group_id`.
-3. The route reads the uploaded bytes.
-4. The route enqueues `src.workers.tasks.process_document_task` with file bytes, filename, and `group_id`.
-5. The route returns only `{"task_id": "<id>"}`.
-6. A separate Celery worker consumes the task.
-7. The worker parses, chunks, embeds, and writes records to LanceDB.
-8. `GET /status/{task_id}` reads task state and result from the Celery result backend.
+## LanceDB
 
-The FastAPI process does not ingest documents after enqueueing the task.
+`DocumentChunk` fields:
 
-## Worker Pipeline
-
-`process_document_task(file_bytes, filename, group_id)` does:
-
-1. Instantiate `PyPDFParser`.
-2. Retrieve the module-level cached `SentenceTransformerEngine` (lazily initialized on the first task run to avoid process-fork/CUDA issues and model reload overhead).
-3. Instantiate `LanceDBStore`.
-4. Extract text chunks from the PDF.
-5. Embed each chunk.
-6. Build LanceDB records with:
-   - `chunk_id`: UUID string
-   - `vector`: 384 floats
-   - `text`: chunk text
-   - `group_id`: upload group id
-   - `filename`: source filename
-   - `page`: source page number, when available
-7. Call `store.upsert(records)`.
-8. Return filename, group id, and indexed chunk count.
-
-## Parser
-
-`PyPDFParser` uses:
-
-- `pypdf.PdfReader`
-- `RecursiveCharacterTextSplitter`
-- `chunk_size=512`
-- `chunk_overlap=50`
-
-Each returned chunk has:
-
-```python
-{
-    "text": "...",
-    "metadata": {
-        "filename": "doc.pdf",
-        "page": 1,
-    },
-}
-```
-
-If no extractable text exists, parser raises `ValueError("No extractable text found")`.
-
-## Embeddings
-
-`SentenceTransformerEngine` loads `BAAI/bge-small-en-v1.5` by default.
-
-`embed_text()` normalizes embeddings and enforces exactly 384 dimensions. A different embedding model must either preserve 384 dimensions or require a coordinated LanceDB schema change.
-
-## LanceDB Store
-
-`DocumentChunk` schema:
-
-- `chunk_id: str`
+- `chunk_id`
 - `vector: Vector(384)`
-- `text: str`
-- `group_id: str`
-- `filename: str`
-- `page: int | None`
+- `text`
+- `group_id`
+- `filename`
+- `page`
 
-`LanceDBStore` connects to `settings.lancedb_uri`, passes optional AWS-backed `storage_options`, opens or creates `settings.lancedb_table`, and ensures an FTS index on `text`.
+Search uses LanceDB hybrid search and validates `group_id` before string-formatting the filter.
 
-For local development without object storage, set:
+## Docker
 
-```env
-LANCEDB_URI=./lancedb_data
-```
+`docker-compose.yml` is GPU-first and defines:
 
-Search uses LanceDB hybrid query:
+- `api_gateway`
+- `ingestion_worker`
+- `embedding_service`
+- `llm_service`
+- `redis_broker`
+- `web_client`
 
-```python
-table.search(query_type="hybrid").vector(query_vector).text(query_text)
-```
+`docker-compose.cpu.yml` swaps `llm_service` to `vllm/vllm-openai-cpu:latest-x86_64`, sets `VLLM_TARGET_DEVICE=cpu`, and resets GPU reservations.
 
-If `group_id` is provided, the store validates it and applies:
+## Scaling
 
-```python
-.where(f"group_id = '{group_id}'", prefilter=True)
-```
+v1 runs one `llm_service`. Next scaling step is one vLLM instance per GPU. If VRAM permits multiple model copies, add `llm_service_1`, `llm_service_2`, etc. with lower `--gpu-memory-utilization`, then add `LLM_GRPC_URLS` and API-side round-robin. No Envoy/gRPC load balancer in v1.
 
-The regex guard is required because the filter is string formatted.
+## Rules
 
-## API Endpoints
-
-The FastAPI app enables CORS for `settings.cors_origins`, which defaults to the Docker Nginx client on `http://localhost:3000` and Vite dev server on `http://localhost:5173`.
-
-`POST /upload`
-
-- Input: multipart PDF file and `group_id`
-- Output: `{"task_id": str}`
-
-`GET /status/{task_id}`
-
-- Output always includes `task_id` and `state`
-- Adds `result` on success
-- Adds `error` on failure
-
-`POST /chat`
-
-- Input JSON:
-
-```json
-{
-  "query": "question",
-  "group_id": "demo",
-  "limit": 5
-}
-```
-
-- `query`: required non-empty string
-- `group_id`: required, regex validated
-- `limit`: integer from 1 to 20
-- Output: raw retrieval results, not LLM-generated answers
-
-## LLM Engine Status
-
-`LlamaCPPEngine` exists but is not wired into `/chat`.
-
-It lazy-imports `llama_cpp` and raises a clear runtime error if the optional `llm` extra is missing. Initialization chooses:
-
-- GPU: if `/usr/local/cuda` exists, `n_gpu_layers=-1`
-- CPU: otherwise `n_threads=os.cpu_count() or 1`
-
-Current `/chat` returns retrieved LanceDB chunks only.
-
-## Frontend Client
-
-`rag-web/src/App.tsx` calls the existing API:
-
-- `POST /upload` with multipart `file` and `group_id`
-- `GET /status/{task_id}` in a polling loop until Celery reaches a terminal state
-- `POST /chat` with `query`, `group_id`, and `limit`
-
-The client reads `VITE_API_BASE_URL` at build time and defaults to `http://localhost:8000`.
-
-## Docker Compose
-
-`docker-compose.yml` defines four services:
-
-- `api_gateway`: shared Python image, exposes port `8000`
-- `redis_broker`: official `redis:alpine`, exposes port `6379`
-- `ai_worker`: shared Python image, runs Celery, includes an NVIDIA GPU reservation
-- `web_client`: builds `rag-web` and serves the static files with Nginx on port `3000`
-
-Compose hard-codes container Redis URLs to `redis://redis_broker:6379/0`; do not reuse localhost Redis URLs inside containers.
-
-## Architectural Rules
-
-- Keep long-running ingestion in Celery, not FastAPI.
-- Keep route handlers thin: validation, dependency use, enqueue/search, response shaping.
-- Keep vendor-specific implementation details inside `src/services/`.
-- Keep API and worker Celery URLs aligned.
-- Keep the LanceDB vector dimension and embedding model dimension aligned.
+- Keep long-running ingestion in Celery.
+- Keep API handlers thin.
+- Keep model dependencies out of API and ingestion.
+- Keep vector dimension and embedding model aligned.
 - Keep `group_id` validation before LanceDB filtering.
-- Keep browser CORS origins explicit.
-- Update `README.md` and `docs/` when setup, runtime flow, endpoints, or architecture changes.
+- Update README and docs when runtime flow, endpoints, services, or environment changes.

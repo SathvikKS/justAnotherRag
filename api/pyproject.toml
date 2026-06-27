@@ -1,0 +1,20 @@
+[project]
+name = "rag-api"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "celery[redis]>=5.6.3",
+    "fastapi[standard]",
+    "rag-core",
+    "rag-grpc",
+    "rag-storage",
+]
+
+[tool.uv.sources]
+rag-core = { workspace = true }
+rag-grpc = { workspace = true }
+rag-storage = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

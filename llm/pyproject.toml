@@ -1,0 +1,60 @@
+[project]
+name = "rag-llm"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+gpu = [
+    "torch ; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "vllm ; sys_platform == 'linux' and platform_machine == 'x86_64'",
+]
+cpu = [
+    "torch ; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "vllm ; sys_platform == 'linux' and platform_machine == 'x86_64'",
+]
+mock = [
+    "grpcio",
+]
+
+[tool.uv]
+conflicts = [
+    [
+        { extra = "cpu" },
+        { extra = "gpu" },
+    ],
+]
+environments = [
+    "sys_platform == 'linux' and platform_machine == 'x86_64'",
+]
+index-strategy = "unsafe-best-match"
+
+[tool.uv.sources]
+vllm = [
+    { index = "vllm-cpu", extra = "cpu" },
+    { index = "vllm-cu129", extra = "gpu" },
+]
+torch = [
+    { index = "pytorch-cpu", extra = "cpu" },
+    { index = "pytorch-cu129", extra = "gpu" },
+]
+
+[[tool.uv.index]]
+name = "vllm-cpu"
+url = "https://wheels.vllm.ai/0.23.0/cpu"
+
+[[tool.uv.index]]
+name = "vllm-cu129"
+url = "https://wheels.vllm.ai/0.23.0/cu129"
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+
+[[tool.uv.index]]
+name = "pytorch-cu129"
+url = "https://download.pytorch.org/whl/cu129"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

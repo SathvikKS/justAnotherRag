@@ -1,0 +1,15 @@
+[project]
+name = "rag-grpc"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "grpcio",
+    "rag-core",
+]
+
+[tool.uv.sources]
+rag-core = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

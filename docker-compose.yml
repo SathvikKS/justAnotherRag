@@ -1,50 +1,61 @@
 services:
   api_gateway:
-    build: .
-    command: uvicorn src.api.routes:app --host 0.0.0.0 --port 8000
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    command: uvicorn rag_api.routes:app --host 0.0.0.0 --port 8000
+    env_file:
+      - ./api/.env
     environment:
-      LANCEDB_URI: ${LANCEDB_URI:-s3://app-vector-bucket}
-      LANCEDB_TABLE: ${LANCEDB_TABLE:-document_chunks}
-      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-BAAI/bge-small-en-v1.5}
+      EMBEDDING_GRPC_URL: embedding_service:50051
+      LLM_GRPC_URL: llm_service:50052
       CELERY_BROKER_URL: redis://redis_broker:6379/0
       CELERY_RESULT_BACKEND: redis://redis_broker:6379/0
-      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://localhost:5173}
-      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
-      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
-      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
-      AWS_REGION: ${AWS_REGION:-us-east-1}
-      AWS_ENDPOINT_URL: ${AWS_ENDPOINT_URL:-}
     ports:
       - "8000:8000"
-    volumes:
-      - lancedb_data:/app/lancedb_data
-      - hf_cache:/root/.cache/huggingface
     depends_on:
       - redis_broker
+      - embedding_service
+      - llm_service
 
-  redis_broker:
-    image: redis:alpine
-    ports:
-      - "6379:6379"
-
-  ai_worker:
-    build: .
-    command: celery -A src.workers.tasks.celery_app worker --loglevel=info
+  ingestion_worker:
+    build:
+      context: .
+      dockerfile: ingestion/Dockerfile
+    command: celery -A rag_ingestion.tasks.celery_app worker --loglevel=info
+    env_file:
+      - ./ingestion/.env
     environment:
-      LANCEDB_URI: ${LANCEDB_URI:-s3://app-vector-bucket}
-      LANCEDB_TABLE: ${LANCEDB_TABLE:-document_chunks}
-      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-BAAI/bge-small-en-v1.5}
+      EMBEDDING_GRPC_URL: embedding_service:50051
       CELERY_BROKER_URL: redis://redis_broker:6379/0
       CELERY_RESULT_BACKEND: redis://redis_broker:6379/0
-      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
-      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
-      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
-      AWS_REGION: ${AWS_REGION:-us-east-1}
-      AWS_ENDPOINT_URL: ${AWS_ENDPOINT_URL:-}
     depends_on:
       - redis_broker
+      - embedding_service
+
+  embedding_service:
+    build:
+      context: .
+      dockerfile: embedding/Dockerfile
+    env_file:
+      - ./embedding/.env
+    environment:
+      EMBEDDING_GRPC_PORT: 50051
     volumes:
-      - lancedb_data:/app/lancedb_data
+      - hf_cache:/root/.cache/huggingface
+
+  llm_service:
+    build:
+      context: .
+      dockerfile: llm/Dockerfile.gpu
+    env_file:
+      - ./llm/.env
+    environment:
+      LLM_GRPC_HOST: 0.0.0.0
+      LLM_GRPC_PORT: 50052
+    ports:
+      - "50052:50052"
+    volumes:
       - hf_cache:/root/.cache/huggingface
     deploy:
       resources:
@@ -54,16 +65,20 @@ services:
               count: all
               capabilities: [gpu]
 
+  redis_broker:
+    image: redis:alpine
+    ports:
+      - "6379"
+
   web_client:
     build:
       context: ./rag-web
       args:
-        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8000}
+        VITE_API_BASE_URL: http://localhost:8000
     ports:
       - "3000:80"
     depends_on:
       - api_gateway
 
 volumes:
-  lancedb_data:
   hf_cache:

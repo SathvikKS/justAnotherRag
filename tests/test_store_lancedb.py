@@ -15,7 +15,7 @@ def temp_db(request):
 
 class TestLanceDBStore:
     def test_upsert_and_search(self, temp_db):
-        from src.services.store_lancedb import LanceDBStore
+        from rag_storage import LanceDBStore
 
         store = LanceDBStore(uri=temp_db, table_name="test_chunks")
 
@@ -74,7 +74,7 @@ class TestLanceDBStore:
         assert len(results_single) == 1
 
     def test_search_with_bad_group_id_rejected(self, temp_db):
-        from src.services.store_lancedb import LanceDBStore
+        from rag_storage import LanceDBStore
 
         store = LanceDBStore(uri=temp_db, table_name="test_chunks")
 

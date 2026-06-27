@@ -64,7 +64,11 @@ If yes, update the matching docs in the same change.
 - API and worker must share the same Redis URLs.
 - `/upload` returns a Celery task id, not ingestion results.
 - `/status/{task_id}` reads Celery state.
-- `/chat` currently returns retrieved chunks, not LLM-generated answers.
+- `/chat` returns a generated `answer` and retrieval `sources`.
+- API and ingestion must not import SentenceTransformers, Torch, or vLLM.
+- Embedding model dependencies live in `embedding/`.
+- vLLM dependencies live in `llm/`.
+- Mock LLM mode requires `LLM_PROVIDER=mock` on the API process.
 - LanceDB vectors are fixed at 384 dimensions.
 - `group_id` must stay validated before LanceDB filtering.
 

@@ -1,4 +1,4 @@
-from src.workers import tasks
+from rag_ingestion import tasks
 
 
 def test_process_document_task_runs_pipeline(monkeypatch):
@@ -14,8 +14,8 @@ def test_process_document_task_runs_pipeline(monkeypatch):
             ]
 
     class FakeEmbedder:
-        def embed_text(self, text):
-            return [float(len(text))] * 384
+        def embed_texts(self, texts):
+            return [[float(len(text))] * 384 for text in texts]
 
     class FakeStore:
         def __init__(self):
@@ -27,7 +27,7 @@ def test_process_document_task_runs_pipeline(monkeypatch):
             return True
 
     monkeypatch.setattr(tasks, "PyPDFParser", FakeParser)
-    monkeypatch.setattr(tasks, "SentenceTransformerEngine", FakeEmbedder)
+    monkeypatch.setattr(tasks, "EmbeddingClient", lambda url: FakeEmbedder())
     monkeypatch.setattr(tasks, "LanceDBStore", FakeStore)
 
     result = tasks.process_document_task.run(b"%PDF", "doc.pdf", "group-a")

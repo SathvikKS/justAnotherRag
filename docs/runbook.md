@@ -1,180 +1,151 @@
 # Runbook
 
-Operational notes for the current local app.
-
 ## Prerequisites
 
-- Python managed by `uv`
+- `uv`
+- Docker Compose for container runs
 - Node.js/npm for local frontend development
-- Docker Compose for containerized runs
-- Redis on port `6379`
-- A `.env` file in the repo root
-- Two long-running processes for normal use:
-  - FastAPI API server
-  - Celery worker
-- Optional third process for the Vite frontend dev server
+- Redis for local non-Docker ingestion
+- service `.env` files copied from each service's `.env.example`
 
 ## Environment
 
-Password-protected Redis:
+Each service reads `.env` from its own current directory. Copy each service's example when setting it up:
+
+- `api/.env.example` -> `api/.env`
+- `ingestion/.env.example` -> `ingestion/.env`
+- `embedding/.env.example` -> `embedding/.env`
+- `llm/.env.example` -> `llm/.env`
+
+Shared values that must match:
 
 ```env
-LANCEDB_URI=s3://app-vector-bucket
+LANCEDB_URI=./lancedb_data
 LANCEDB_TABLE=document_chunks
 EMBEDDING_MODEL=BAAI/bge-small-en-v1.5
-CELERY_BROKER_URL=redis://:redis_password@localhost:6379/0
-CELERY_RESULT_BACKEND=redis://:redis_password@localhost:6379/0
-LLAMA_MODEL_PATH=model.gguf
-CORS_ORIGINS=http://localhost:3000,http://localhost:5173
-AWS_ACCESS_KEY_ID=
-AWS_SECRET_ACCESS_KEY=
-AWS_SESSION_TOKEN=
-AWS_REGION=us-east-1
-AWS_ENDPOINT_URL=
-VITE_API_BASE_URL=http://localhost:8000
-```
-
-Redis without password:
-
-```env
+EMBEDDING_GRPC_URL=localhost:50051
+LLM_PROVIDER=mock
+LLM_GRPC_URL=localhost:50052
+LLM_MODEL=Qwen/Qwen2.5-7B-Instruct
+LLM_MAX_TOKENS=512
 CELERY_BROKER_URL=redis://localhost:6379/0
 CELERY_RESULT_BACKEND=redis://localhost:6379/0
 ```
 
-The API and worker both read `.env`, so restart both after editing it.
+Compose also reads those service `.env` files with `env_file`. It overrides hostnames to Docker network names: `redis_broker:6379`, `embedding_service:50051`, and `llm_service:50052`.
 
-For local filesystem LanceDB storage, set:
+If Redis requires a password, put the same passworded Redis URLs in `api/.env` and `ingestion/.env`.
 
-```env
-LANCEDB_URI=./lancedb_data
+## Local Services
+
+API:
+
+```powershell
+cd api
+copy .env.example .env
+uv sync
+uv run uvicorn rag_api.routes:app --reload
 ```
 
-## Redis
+Ingestion worker:
 
-The repo `docker-compose.yml` includes a non-password Redis service named `redis_broker`.
-
-If using an existing password-protected Redis, this kind of compose service is also valid:
-
-```yaml
-services:
-  redis:
-    image: redis:7-alpine
-    container_name: local_redis
-    restart: unless-stopped
-    command: redis-server --requirepass redis_password
-    ports:
-      - "6379:6379"
-    volumes:
-      - ./redis/data:/data
+```powershell
+cd ingestion
+copy .env.example .env
+uv sync
+uv run celery -A rag_ingestion.tasks.celery_app worker --loglevel=info --pool=solo
 ```
 
-Use only one Redis service on port `6379`.
+Embedding service:
 
-## Docker Compose
+```powershell
+cd embedding
+copy .env.example .env
+uv sync --extra cpu
+uv run python -m rag_embedding.server
+```
 
-Start the full stack:
+LLM mock:
+
+```powershell
+cd llm
+copy .env.example .env
+uv sync --extra mock
+uv run python -m rag_llm.mock_server
+```
+
+Set `LLM_PROVIDER=mock` before starting the API to route `/chat` to the mock server. The mock returns `Mock answer for: <query>` and is for local API/frontend checks, not production.
+
+LLM GPU (Linux/WSL2):
+
+```powershell
+cd llm
+copy .env.example .env
+uv sync --extra gpu --index-strategy unsafe-best-match
+uv run python -m rag_llm.serve
+```
+
+LLM CPU (Linux/WSL2):
+
+```powershell
+cd llm
+copy .env.example .env
+VLLM_TARGET_DEVICE=cpu uv sync --extra cpu --torch-backend cpu
+uv run python -m rag_llm.serve
+```
+
+The `llm/pyproject.toml` extras route `vllm` and `torch` to different indexes:
+
+- `gpu`: `https://wheels.vllm.ai/0.23.0/cu129` and `https://download.pytorch.org/whl/cu129`
+- `cpu`: `https://wheels.vllm.ai/0.23.0/cpu` and `https://download.pytorch.org/whl/cpu`
+
+On Windows, use WSL2, Docker CPU mode, or the mock server for local LLM work.
+
+On Windows, use `--pool=solo` for Celery local development.
+
+## Docker
+
+GPU:
 
 ```powershell
 docker compose up --build
 ```
 
-Endpoints:
-
-- API: `http://localhost:8000`
-- Web client: `http://localhost:3000`
-- Redis: `localhost:6379`
-
-The compose API and worker services use `redis://redis_broker:6379/0` inside the Docker network. Do not set container Celery URLs to `localhost`.
-
-The worker includes an NVIDIA GPU reservation:
-
-```yaml
-deploy:
-  resources:
-    reservations:
-      devices:
-        - driver: nvidia
-          count: all
-          capabilities: [gpu]
-```
-
-On CPU-only Docker hosts, remove that block before running compose.
-
-## Start The App
-
-Terminal 1, API:
+CPU:
 
 ```powershell
-uv run uvicorn src.api.routes:app --reload
+docker compose -f docker-compose.yml -f docker-compose.cpu.yml up --build
 ```
 
-Terminal 2, Celery worker:
+Validate config:
 
 ```powershell
-uv run celery -A src.workers.tasks.celery_app worker --loglevel=info --pool=solo
+docker compose config
+docker compose -f docker-compose.yml -f docker-compose.cpu.yml config
 ```
-
-On Windows, keep `--pool=solo` for local development.
-
-Terminal 3, frontend:
-
-```powershell
-cd rag-web
-npm run dev
-```
-
-Open `http://localhost:5173`.
-
-### Celery Concurrency & Pools (Windows vs. Production)
-
-Understanding how the background tasks run and scale depending on your OS and environment:
-
-#### 1. Windows Local Development (`--pool=solo`)
-* **Why:** Python's process-spawning (`prefork`) pool in Celery is buggy and unstable on Windows. Using `--pool=solo` runs the worker in a single process, single-threaded execution model.
-* **Concurrency:** Strictly sequential (1 task at a time). Setting `--concurrency` / `-c` has no effect.
-* **Testing Concurrency on Windows:** If you want to test concurrent task execution on Windows:
-  * **Option A (Multiple Workers):** Open multiple separate terminals and run workers with unique names:
-    ```powershell
-    uv run celery -A src.workers.tasks.celery_app worker --loglevel=info --pool=solo -n worker1@%h
-    ```
-  * **Option B (Thread Pool):** Run with `--pool=threads --concurrency=4`. Note that CPU-bound embedding generation will be throttled by Python's GIL, but it lets you test concurrent task routing.
-  * **Option C (Docker/WSL2):** Run the API and Celery worker inside Docker or WSL2 to run a native Linux environment.
-
-#### 2. Production Environment (`--pool=prefork`)
-* **Why:** In production (on Linux or Docker containers), use the default `prefork` pool.
-* **Concurrency:** Set `--concurrency=X` (typically matching the CPU core count). This spawns `X` independent worker processes.
-* **GIL Bypass:** Because it uses separate processes rather than threads, it bypasses Python's Global Interpreter Lock (GIL). Multiple PDF extraction and embedding tasks will execute in true, 100% parallel speed.
-* **Fault Isolation:** If a CPU-intensive C-library (e.g. PDF parser) encounters a hard crash, only that child process terminates. Celery automatically replaces it with a new process, keeping the worker online.
 
 ## Health Checks
 
-Check the API:
+API docs:
 
 ```powershell
 curl http://localhost:8000/docs
 ```
 
-Check that a worker is registered:
+Worker ping:
 
 ```powershell
-uv run celery -A src.workers.tasks.celery_app inspect ping
+cd ingestion
+uv run celery -A rag_ingestion.tasks.celery_app inspect ping
 ```
 
-Expected: at least one worker replies.
-
-List registered worker tasks:
-
-```powershell
-uv run celery -A src.workers.tasks.celery_app inspect registered
-```
-
-Expected task:
+Registered task should include:
 
 ```text
-src.workers.tasks.process_document_task
+rag_ingestion.tasks.process_document_task
 ```
 
-## Upload And Search
+## Upload And Chat
 
 Upload:
 
@@ -188,90 +159,45 @@ Poll:
 curl http://localhost:8000/status/<task_id>
 ```
 
-Search:
+Chat:
 
 ```powershell
 curl -X POST http://localhost:8000/chat -H "Content-Type: application/json" -d "{\"query\":\"What is this document about?\",\"group_id\":\"demo\",\"limit\":5}"
 ```
 
-## Debug `PENDING` Tasks
+Response has `answer` and `sources`.
 
-`PENDING` means Celery has no result history for that task id. It does not prove the task is waiting in a queue.
+## Troubleshooting
 
-Check:
+`/status/{task_id}` stays `PENDING`:
 
-- The worker process is running.
-- The worker command uses `-A src.workers.tasks.celery_app`.
-- `inspect ping` returns a worker reply.
-- `inspect registered` lists `src.workers.tasks.process_document_task`.
-- API and worker use the same `CELERY_BROKER_URL`.
-- API and worker use the same `CELERY_RESULT_BACKEND`.
-- Redis password in `.env` matches the running Redis server.
-- API and worker were both restarted after `.env` changes.
+- Start `ingestion_worker`.
+- Confirm API and worker use the same Redis URLs.
+- Confirm the worker registered `rag_ingestion.tasks.process_document_task`.
+- Restart API and worker after `.env` changes.
 
-## Debug Upload Failures
+`/chat` fails:
 
-`400 Only PDF files are supported`
+- Confirm `embedding_service` is reachable from API.
+- Confirm `llm_service` is reachable from API.
+- If using mock mode, confirm API has `LLM_PROVIDER=mock`.
+- Confirm LanceDB URI and AWS settings are valid.
 
-- Filename must end with `.pdf`.
+Worker failure:
 
-`400 group_id is required`
-
-- `group_id` cannot be blank.
-
-`400` or `422` for bad `group_id`
-
-- Allowed characters: letters, digits, underscore, dot, hyphen.
-
-Worker failure after task starts:
-
-- Check the worker terminal logs.
-- Common causes: malformed PDF, image-only PDF with no extractable text, embedding model download/cache issue, LanceDB write issue.
-
-## LanceDB Data
-
-Default phase 4 storage URI:
-
-```text
-s3://app-vector-bucket
-```
-
-Local data path when `LANCEDB_URI=./lancedb_data`:
-
-```text
-./lancedb_data
-```
-
-This directory is ignored by git. In Docker, it is mounted through the `lancedb_data` volume.
-
-To reset local indexed data, stop API/worker first, then remove `lancedb_data`.
-
-## Optional LLM Engine
-
-The optional LLM package is declared as the `llm` extra:
-
-```powershell
-uv sync --extra llm
-```
-
-`LlamaCPPEngine` expects `LLAMA_MODEL_PATH` to point to a local GGUF file. This engine is currently not wired into `/chat`.
+- Malformed PDF.
+- Image-only PDF with no extractable text.
+- Embedding model download/cache failure.
+- LanceDB write failure.
 
 ## Tests
-
-Preferred:
 
 ```powershell
 uv run pytest -q -p no:cacheprovider
 ```
 
-Fallback if `uv run` is busy syncing optional native packages:
-
-```powershell
-.\.venv\Scripts\python.exe -m pytest -q -p no:cacheprovider
-```
-
 Current expected result:
 
 ```text
-17 passed
+20 passed
 ```

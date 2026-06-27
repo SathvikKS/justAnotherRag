@@ -1,88 +1,128 @@
 # Local RAG
 
-Local RAG app for PDF ingestion and document search. It uses FastAPI for HTTP, Celery for background ingestion, Redis as broker/result backend, SentenceTransformers for embeddings, LanceDB for hybrid vector plus full-text search, and a Vite React client.
+Local RAG app for PDF ingestion and generated answers over indexed document groups.
+
+The Python side is a uv workspace with separate root services:
+
+- `api/`: FastAPI HTTP API.
+- `ingestion/`: Celery PDF ingestion worker.
+- `embedding/`: gRPC SentenceTransformers embedding service.
+- `llm/`: vLLM gRPC launcher plus mock server.
+- `packages/`: shared config, LanceDB storage, and gRPC clients.
+- `rag-web/`: Vite React client.
 
 ## What Works Today
 
-- Upload PDF files and assign them to a `group_id`.
-- Process uploads in a separate Celery worker.
-- Parse PDFs with `pypdf`.
-- Split extracted page text into 512-character chunks with 50-character overlap.
-- Embed chunks with `BAAI/bge-small-en-v1.5` into 384-dimensional vectors.
-- Store chunks in LanceDB with filename, page, group, text, vector, and chunk id.
-- Search with LanceDB hybrid vector plus text search, prefiltered by `group_id`.
-- Poll Celery task status by task id.
-- Use the React client to upload PDFs, watch ingestion status, and query a group.
-- Run the API, Redis, worker, and web client through Docker Compose.
-- Point LanceDB at S3-style object storage with AWS credentials from the environment.
-- Optional local `llama-cpp-python` engine exists behind `LlamaCPPEngine`, but `/chat` currently returns retrieved chunks, not generated answers.
-
-## Docs
-
-- [Architecture](docs/architecture.md)
-- [Runbook](docs/runbook.md)
-- [Agent maintenance guide](docs/agent-maintenance.md)
+- Upload PDFs and assign them to a `group_id`.
+- Process uploads in `ingestion_worker`.
+- Parse PDFs with `pypdf` and split into 512-character chunks.
+- Embed queries and chunks through `embedding_service`.
+- Store chunks in LanceDB with 384-dimensional vectors.
+- Search LanceDB with hybrid vector plus text search, filtered by `group_id`.
+- Generate `/chat` answers through `llm_service`.
+- Run GPU-first Docker Compose, or add the CPU override.
 
 ## Environment
 
-Create `.env`:
+Each service owns its env file. Copy the service `.env.example` to `.env` inside the service directory you run from.
+
+Important defaults:
 
 ```env
-LANCEDB_URI=s3://app-vector-bucket
+LANCEDB_URI=./lancedb_data
 LANCEDB_TABLE=document_chunks
 EMBEDDING_MODEL=BAAI/bge-small-en-v1.5
-CELERY_BROKER_URL=redis://:redis_password@localhost:6379/0
-CELERY_RESULT_BACKEND=redis://:redis_password@localhost:6379/0
-LLAMA_MODEL_PATH=model.gguf
-CORS_ORIGINS=http://localhost:3000,http://localhost:5173
-AWS_ACCESS_KEY_ID=
-AWS_SECRET_ACCESS_KEY=
-AWS_SESSION_TOKEN=
-AWS_REGION=us-east-1
-AWS_ENDPOINT_URL=
-VITE_API_BASE_URL=http://localhost:8000
-```
-
-For local filesystem LanceDB storage, set `LANCEDB_URI=./lancedb_data`.
-
-For Redis without a password, use:
-
-```env
+EMBEDDING_GRPC_URL=localhost:50051
+LLM_PROVIDER=mock
+LLM_GRPC_URL=localhost:50052
+LLM_MODEL=Qwen/Qwen2.5-7B-Instruct
 CELERY_BROKER_URL=redis://localhost:6379/0
 CELERY_RESULT_BACKEND=redis://localhost:6379/0
 ```
 
-## Run Locally
+For local filesystem LanceDB storage, set `LANCEDB_URI=./lancedb_data`.
 
-Start Redis. The app can use any Redis reachable at the URLs in `.env`.
+If Redis requires a password, set the passworded `CELERY_BROKER_URL` and `CELERY_RESULT_BACKEND` in both `api/.env` and `ingestion/.env`.
 
-Start the API:
+## Local Dev
 
-```powershell
-uv run uvicorn src.api.routes:app --reload
-```
-
-Start the Celery worker in a second terminal:
+API:
 
 ```powershell
-uv run celery -A src.workers.tasks.celery_app worker --loglevel=info --pool=solo
+cd api
+copy .env.example .env
+uv sync
+uv run uvicorn rag_api.routes:app --reload
 ```
 
-`uvicorn` alone is not enough. Uploads are queued into Redis; the Celery worker does the actual PDF parsing, embedding, and LanceDB writes.
+Ingestion:
 
-Start the web client in a third terminal:
+```powershell
+cd ingestion
+copy .env.example .env
+uv sync
+uv run celery -A rag_ingestion.tasks.celery_app worker --loglevel=info --pool=solo
+```
+
+Embedding:
+
+```powershell
+cd embedding
+copy .env.example .env
+uv sync --extra cpu
+uv run python -m rag_embedding.server
+```
+
+LLM GPU (Linux/WSL2):
+
+```powershell
+cd llm
+copy .env.example .env
+uv sync --extra gpu --index-strategy unsafe-best-match
+uv run python -m rag_llm.serve
+```
+
+LLM CPU (Linux/WSL2):
+
+```powershell
+cd llm
+copy .env.example .env
+VLLM_TARGET_DEVICE=cpu uv sync --extra cpu --torch-backend cpu
+uv run python -m rag_llm.serve
+```
+
+LLM mock:
+
+```powershell
+cd llm
+copy .env.example .env
+uv sync --extra mock
+uv run python -m rag_llm.mock_server
+```
+
+Set `LLM_PROVIDER=mock` in the API environment when using the mock server. It returns `Mock answer for: <query>` without loading vLLM.
+
+Native vLLM CPU/GPU extras do not install on Windows. Use WSL2, Docker, or mock mode there.
+
+Web:
 
 ```powershell
 cd rag-web
 npm run dev
 ```
 
-Open `http://localhost:5173`.
+## Docker
 
-## Run With Docker Compose
+GPU default:
 
 ```powershell
 docker compose up --build
+```
+
+CPU override:
+
+```powershell
+docker compose -f docker-compose.yml -f docker-compose.cpu.yml up --build
 ```
 
 Services:
@@ -90,64 +130,32 @@ Services:
 - API: `http://localhost:8000`
 - Web client: `http://localhost:3000`
 - Redis: `localhost:6379`
+- vLLM gRPC: `localhost:50052`
 
-The worker service includes an NVIDIA GPU reservation. On CPU-only Docker hosts, remove the `ai_worker.deploy.resources.reservations.devices` block.
+Docker defaults to `Qwen/Qwen2.5-7B-Instruct` for GPU and `Qwen/Qwen2.5-1.5B-Instruct` for CPU. Override either with `LLM_MODEL`.
 
-## Use The API
+## API
 
-Upload a PDF:
+Upload:
 
 ```powershell
 curl -X POST http://localhost:8000/upload -F "file=@doc.pdf" -F "group_id=demo"
 ```
 
-Response:
-
-```json
-{"task_id":"<celery-task-id>"}
-```
-
-Poll task status:
-
-```powershell
-curl http://localhost:8000/status/<celery-task-id>
-```
-
-Successful result:
-
-```json
-{
-  "task_id": "<celery-task-id>",
-  "state": "SUCCESS",
-  "result": {
-    "filename": "doc.pdf",
-    "group_id": "demo",
-    "chunks_indexed": 12
-  }
-}
-```
-
-Search indexed documents:
+Chat:
 
 ```powershell
 curl -X POST http://localhost:8000/chat -H "Content-Type: application/json" -d "{\"query\":\"What is this document about?\",\"group_id\":\"demo\",\"limit\":5}"
 ```
 
-Response contains raw retrieval results:
+Response:
 
 ```json
 {
   "query": "What is this document about?",
   "group_id": "demo",
-  "results": [
-    {
-      "text": "...",
-      "filename": "doc.pdf",
-      "page": 1,
-      "group_id": "demo",
-      "score": 0.12
-    }
-  ]
+  "answer": "...",
+  "sources": []
 }
 ```
 
@@ -157,6 +165,9 @@ Response contains raw retrieval results:
 uv run pytest -q -p no:cacheprovider
 ```
 
-## Common Gotcha
+Compose validation:
 
-If `/status/{task_id}` stays `PENDING`, Celery has no result history for that task id. Usually the worker is not running, the worker was started with the wrong app path, or API and worker are using different Redis URLs.
+```powershell
+docker compose config
+docker compose -f docker-compose.yml -f docker-compose.cpu.yml config
+```

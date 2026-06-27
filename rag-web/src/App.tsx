@@ -25,7 +25,7 @@ type TaskStatus = {
   error?: string
 }
 
-type ChatResult = {
+type Source = {
   text: string
   filename?: string
   page?: number
@@ -36,14 +36,15 @@ type ChatResult = {
 type ChatResponse = {
   query: string
   group_id: string
-  results: ChatResult[]
+  answer: string
+  sources: Source[]
 }
 
 type ChatMessage = {
   id: string
   role: "user" | "assistant"
   content: string
-  results?: ChatResult[]
+  sources?: Source[]
 }
 
 function makeId() {
@@ -67,14 +68,6 @@ function formatBytes(bytes: number) {
   }
 
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`
-}
-
-function resultText(results: ChatResult[]) {
-  if (results.length === 0) {
-    return "No matching context found."
-  }
-
-  return results.map((result) => result.text).join("\n\n")
 }
 
 export function App() {
@@ -236,8 +229,8 @@ export function App() {
         {
           id: makeId(),
           role: "assistant",
-          content: resultText(body.results),
-          results: body.results,
+          content: body.answer,
+          sources: body.sources,
         },
       ])
     } catch (error) {
@@ -363,9 +356,9 @@ export function App() {
                   <p className="whitespace-pre-wrap break-words leading-6">
                     {message.content}
                   </p>
-                  {message.results?.length ? (
+                  {message.sources?.length ? (
                     <div className="mt-3 flex flex-wrap gap-2">
-                      {message.results.map((result, index) => (
+                      {message.sources.map((result, index) => (
                         <span
                           key={`${message.id}-${index}`}
                           className="rounded-sm border px-2 py-1 text-xs text-muted-foreground"

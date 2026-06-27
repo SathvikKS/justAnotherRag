@@ -1,0 +1,14 @@
+services:
+  llm_service:
+    build:
+      context: .
+      dockerfile: llm/Dockerfile.cpu
+    environment:
+      LLM_MODEL: Qwen/Qwen2.5-1.5B-Instruct
+      LLM_GRPC_HOST: 0.0.0.0
+      LLM_GRPC_PORT: 50052
+      VLLM_TARGET_DEVICE: cpu
+    deploy:
+      resources:
+        reservations:
+          devices: !reset []

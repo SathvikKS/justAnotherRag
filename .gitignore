@@ -2,7 +2,9 @@
 lancedb_data/
 __pycache__/
 *.pyc
+*.egg-info/
 .env
+**/.env
 .gitnexus
 .test_lancedb/
 rag-web/node_modules/

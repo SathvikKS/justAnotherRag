@@ -1,0 +1,25 @@
+[project]
+name = "rag-embedding"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "rag-core",
+    "rag-grpc",
+    "sentence-transformers",
+]
+
+[project.optional-dependencies]
+cpu = [
+    "torch",
+]
+gpu = [
+    "torch",
+]
+
+[tool.uv.sources]
+rag-core = { workspace = true }
+rag-grpc = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

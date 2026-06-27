@@ -1,8 +1,8 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from src.api.dependencies import get_embedding_engine, get_vector_store
-from src.api.routes import app
+from rag_api.dependencies import get_embedding_engine, get_llm_client, get_vector_store
+from rag_api.routes import app
 
 client = TestClient(app)
 
@@ -25,8 +25,15 @@ def fake_chat_dependencies():
                 }
             ][:limit]
 
+    class FakeLLM:
+        def generate_response(self, prompt, context):
+            assert prompt == "test query"
+            assert context == ["matched text"]
+            return "generated answer"
+
     app.dependency_overrides[get_embedding_engine] = lambda: FakeEmbedder()
     app.dependency_overrides[get_vector_store] = lambda: FakeStore()
+    app.dependency_overrides[get_llm_client] = lambda: FakeLLM()
     yield
     app.dependency_overrides.clear()
 
@@ -73,12 +80,13 @@ class TestUpload:
     def test_valid_pdf_dispatches_task(self, monkeypatch):
         calls = {}
 
-        class FakeTask:
-            def delay(self, file_bytes, filename, group_id):
-                calls["args"] = (file_bytes, filename, group_id)
+        class FakeCelery:
+            def send_task(self, name, args):
+                calls["name"] = name
+                calls["args"] = tuple(args)
                 return type("Result", (), {"id": "task-123"})()
 
-        monkeypatch.setattr("src.api.routes.process_document_task", FakeTask())
+        monkeypatch.setattr("rag_api.routes.celery_app", FakeCelery())
 
         response = client.post(
             "/upload",
@@ -88,6 +96,7 @@ class TestUpload:
 
         assert response.status_code == 200
         assert response.json() == {"task_id": "task-123"}
+        assert calls["name"] == "rag_ingestion.tasks.process_document_task"
         assert calls["args"] == (b"%PDF-1.4 fake", "doc.pdf", "test-group")
 
     def test_status_returns_success_result(self, monkeypatch):
@@ -101,12 +110,12 @@ class TestUpload:
             def failed(self):
                 return False
 
-        class FakeTask:
+        class FakeCelery:
             def AsyncResult(self, task_id):
                 assert task_id == "task-123"
                 return FakeResult()
 
-        monkeypatch.setattr("src.api.routes.process_document_task", FakeTask())
+        monkeypatch.setattr("rag_api.routes.celery_app", FakeCelery())
 
         response = client.get("/status/task-123")
 
@@ -170,4 +179,5 @@ class TestChat:
         body = response.json()
         assert body["query"] == "test query"
         assert body["group_id"] == "safe-id"
-        assert isinstance(body["results"], list)
+        assert body["answer"] == "generated answer"
+        assert isinstance(body["sources"], list)
