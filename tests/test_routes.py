@@ -1,9 +1,34 @@
 import pytest
 from fastapi.testclient import TestClient
 
+from src.api.dependencies import get_embedding_engine, get_vector_store
 from src.api.routes import app
 
 client = TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def fake_chat_dependencies():
+    class FakeEmbedder:
+        def embed_text(self, text):
+            return [0.01] * 384
+
+    class FakeStore:
+        def search(self, query_vector, query_text, group_id=None, limit=5):
+            return [
+                {
+                    "text": "matched text",
+                    "filename": "doc.pdf",
+                    "page": 1,
+                    "group_id": group_id,
+                    "_distance": 0.1,
+                }
+            ][:limit]
+
+    app.dependency_overrides[get_embedding_engine] = lambda: FakeEmbedder()
+    app.dependency_overrides[get_vector_store] = lambda: FakeStore()
+    yield
+    app.dependency_overrides.clear()
 
 
 class TestUpload:
@@ -44,6 +69,53 @@ class TestUpload:
             data={"group_id": ""},
         )
         assert response.status_code in (400, 422)
+
+    def test_valid_pdf_dispatches_task(self, monkeypatch):
+        calls = {}
+
+        class FakeTask:
+            def delay(self, file_bytes, filename, group_id):
+                calls["args"] = (file_bytes, filename, group_id)
+                return type("Result", (), {"id": "task-123"})()
+
+        monkeypatch.setattr("src.api.routes.process_document_task", FakeTask())
+
+        response = client.post(
+            "/upload",
+            files={"file": ("doc.pdf", b"%PDF-1.4 fake", "application/pdf")},
+            data={"group_id": "test-group"},
+        )
+
+        assert response.status_code == 200
+        assert response.json() == {"task_id": "task-123"}
+        assert calls["args"] == (b"%PDF-1.4 fake", "doc.pdf", "test-group")
+
+    def test_status_returns_success_result(self, monkeypatch):
+        class FakeResult:
+            state = "SUCCESS"
+            result = {"chunks_indexed": 2}
+
+            def successful(self):
+                return True
+
+            def failed(self):
+                return False
+
+        class FakeTask:
+            def AsyncResult(self, task_id):
+                assert task_id == "task-123"
+                return FakeResult()
+
+        monkeypatch.setattr("src.api.routes.process_document_task", FakeTask())
+
+        response = client.get("/status/task-123")
+
+        assert response.status_code == 200
+        assert response.json() == {
+            "task_id": "task-123",
+            "state": "SUCCESS",
+            "result": {"chunks_indexed": 2},
+        }
 
 
 class TestChat:

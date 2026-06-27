@@ -12,6 +12,12 @@ dependencies = [
     "lancedb",
     "pyarrow",
     "python-multipart",
+    "celery[redis]>=5.6.3",
+]
+
+[project.optional-dependencies]
+llm = [
+    "llama-cpp-python>=0.3.31",
 ]
 
 [dependency-groups]

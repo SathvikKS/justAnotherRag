@@ -1,14 +1,16 @@
-import os
-import tempfile
+import shutil
+from pathlib import Path
 
 import pytest
 
 
 @pytest.fixture
-def temp_db():
-    with tempfile.TemporaryDirectory() as tmpdir:
-        uri = os.path.join(tmpdir, "test_lancedb")
-        yield uri
+def temp_db(request):
+    root = Path(".test_lancedb") / request.node.name
+    shutil.rmtree(root, ignore_errors=True)
+    root.mkdir(parents=True, exist_ok=True)
+    yield str(root / "test_lancedb")
+    shutil.rmtree(root, ignore_errors=True)
 
 
 class TestLanceDBStore:

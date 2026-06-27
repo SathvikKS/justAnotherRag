@@ -1,15 +1,14 @@
 import re
-import uuid
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field, field_validator
 
 from src.api.dependencies import (
-    get_document_parser,
     get_embedding_engine,
     get_vector_store,
 )
-from src.core.interfaces import DocumentParserBase, EmbeddingEngineBase, VectorStoreBase
+from src.core.interfaces import EmbeddingEngineBase, VectorStoreBase
+from src.workers.tasks import process_document_task
 
 app = FastAPI(title="Local RAG API")
 
@@ -41,12 +40,9 @@ class ChatResponse(BaseModel):
 async def upload(
     file: UploadFile = File(...),
     group_id: str = Form(...),
-    parser: DocumentParserBase = Depends(get_document_parser),
-    embedder: EmbeddingEngineBase = Depends(get_embedding_engine),
-    store: VectorStoreBase = Depends(get_vector_store),
 ):
     if not file.filename or not file.filename.lower().endswith(".pdf"):
-        raise HTTPException(400, "Only PDF files are supported in Phase 1")
+        raise HTTPException(400, "Only PDF files are supported")
 
     if not group_id.strip():
         raise HTTPException(400, "group_id is required")
@@ -60,37 +56,28 @@ async def upload(
     file_bytes = await file.read()
 
     try:
-        parsed_chunks = parser.extract_text(file_bytes, file.filename or "uploaded.pdf")
-    except ValueError as e:
-        raise HTTPException(422, str(e))
+        task = process_document_task.delay(
+            file_bytes,
+            file.filename or "uploaded.pdf",
+            group_id,
+        )
     except Exception as e:
-        raise HTTPException(500, f"Ingestion failed: {e}")
+        raise HTTPException(500, f"Failed to enqueue ingestion task: {e}")
 
-    try:
-        records = []
-        for index, chunk in enumerate(parsed_chunks):
-            text = chunk["text"]
-            metadata = chunk.get("metadata", {})
-            vector = embedder.embed_text(text)
+    return {"task_id": task.id}
 
-            records.append({
-                "chunk_id": str(uuid.uuid4()),
-                "vector": vector,
-                "text": text,
-                "group_id": group_id,
-                "filename": metadata.get("filename", file.filename or "uploaded.pdf"),
-                "page": metadata.get("page"),
-            })
 
-        store.upsert(records)
-    except Exception as e:
-        raise HTTPException(500, f"Ingestion failed: {e}")
+@app.get("/status/{task_id}")
+def status(task_id: str):
+    task = process_document_task.AsyncResult(task_id)
+    body: dict[str, object] = {"task_id": task_id, "state": task.state}
 
-    return {
-        "filename": file.filename,
-        "group_id": group_id,
-        "chunks_indexed": len(records),
-    }
+    if task.successful():
+        body["result"] = task.result
+    elif task.failed():
+        body["error"] = str(task.result)
+
+    return body
 
 
 @app.post("/chat", response_model=ChatResponse)

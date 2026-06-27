@@ -41,3 +41,25 @@ This project is indexed by GitNexus as **rag** (128 symbols, 209 relationships, 
 | Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
 
 <!-- gitnexus:end -->
+
+<!-- internal-docs:start -->
+# Internal Documentation
+
+Agents must keep project documentation current as part of any code or architecture change.
+
+## Required Docs
+
+- `README.md`: user-facing setup and basic app usage.
+- `docs/architecture.md`: module boundaries, runtime flow, and architectural rules.
+- `docs/runbook.md`: commands, environment variables, worker startup, Redis setup, and troubleshooting.
+- `docs/agent-maintenance.md`: documentation maintenance rules for future agents.
+
+## Agent Rules
+
+- Before finishing a change, decide whether README or `docs/` must be updated.
+- Update docs in the same change when behavior, setup, endpoints, workers, services, environment variables, storage, or architecture changes.
+- Treat `docs/architecture.md` as the handoff guide for new chat sessions.
+- Treat `docs/runbook.md` as the source of truth for running and debugging the app.
+- If a future agent would need to rediscover a fact, document it.
+
+<!-- internal-docs:end -->
