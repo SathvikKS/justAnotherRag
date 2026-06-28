@@ -98,7 +98,7 @@ class DebugSearchRequest(ChatRequest):
 class DebugSearchResponse(BaseModel):
     query: str
     group_id: str
-    results: list[dict]
+    results: list[Source]
 
 
 SMALL_TALK_RESPONSES = {
@@ -275,7 +275,7 @@ def delete_file(
     return DeleteResponse(deleted_chunks=deleted)
 
 
-@app.post("/chat", response_model=ChatResponse)
+@app.post("/chat", response_model=ChatResponse, response_model_exclude_none=True)
 def chat(
     payload: ChatRequest,
     embedder: EmbeddingEngineBase = Depends(get_embedding_engine),
@@ -349,7 +349,7 @@ def chat(
     )
 
 
-@app.post("/debug/search", response_model=DebugSearchResponse)
+@app.post("/debug/search", response_model=DebugSearchResponse, response_model_exclude_none=True)
 def debug_search(
     payload: DebugSearchRequest,
     embedder: EmbeddingEngineBase = Depends(get_embedding_engine),
@@ -369,5 +369,5 @@ def debug_search(
     return DebugSearchResponse(
         query=payload.query,
         group_id=payload.group_id,
-        results=results,
+        results=[source_from_result(item) for item in results],
     )

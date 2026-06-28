@@ -20,6 +20,7 @@ The Python side is a uv workspace with separate root services:
 - Store chunks in LanceDB with 384-dimensional vectors.
 - Search LanceDB with hybrid vector plus text search, filtered by `group_id`.
 - Generate `/chat` answers through `llm_service` with a structured RAG prompt and tokenizer-native chat template rendering.
+- Query from the web client in either `Ask AI` mode or direct `Search Vector DB` mode.
 - Bypass retrieval for simple greetings and return no sources.
 - List and permanently delete indexed files or whole groups without deleting the LanceDB directory.
 - Run GPU-first Docker Compose, or add the CPU override.
@@ -210,13 +211,13 @@ curl -X DELETE http://localhost:8000/groups/demo
 
 Deletes are permanent. Re-uploading the same filename creates a new `file_id`.
 
-Inspect raw retrieval output:
+Inspect direct retrieval output:
 
 ```powershell
 curl -X POST http://localhost:8000/debug/search -H "Content-Type: application/json" -d "{\"query\":\"What is this document about?\",\"group_id\":\"demo\",\"limit\":5}"
 ```
 
-The web client also shows indexed files for the current group and exposes refresh/delete controls in the sidebar. Chat settings let users choose how many source chunks to retrieve (`5` by default) and whether to reject uncited answers. The prompt always asks for citations on document-backed answers; the toggle only controls whether uncited answers are accepted or rejected. Assistant messages include a grounding badge for every document-backed answer: `Cited`, `Uncited`, or `Uncited: rejected`. When citation enforcement is enabled, rejected responses expose the raw uncited model answer in an expandable debug panel.
+The web client also shows indexed files for the current group and exposes refresh/delete controls in the sidebar. The main query panel has two modes: `Ask AI` calls `/chat` and returns an LLM answer with sources, while `Search Vector DB` calls `/debug/search` and shows ranked retrieval hits without LLM generation. Query responses omit vectors and empty optional fields to keep payloads small. Query settings let users choose how many source chunks to retrieve (`5` by default) and whether to reject uncited AI answers. The prompt always asks for citations on document-backed answers; the toggle only controls whether uncited answers are accepted or rejected. Assistant messages include a grounding badge for every document-backed answer: `Cited`, `Uncited`, or `Uncited: rejected`. When citation enforcement is enabled, rejected responses expose the raw uncited model answer in an expandable debug panel.
 
 ## Test
 

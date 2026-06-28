@@ -85,6 +85,12 @@ type ChatResponse = {
   grounding: Grounding
 }
 
+type DebugSearchResponse = {
+  query: string
+  group_id: string
+  results: Source[]
+}
+
 type Grounding = {
   mode: string
   sources_supplied: number
@@ -101,6 +107,8 @@ type ChatMessage = {
   sources?: Source[]
   grounding?: Grounding
 }
+
+type QueryMode = "chat" | "search"
 
 function makeId() {
   return crypto.randomUUID()
@@ -142,9 +150,12 @@ export function App() {
   const [uploadError, setUploadError] = React.useState<string | null>(null)
   const [isUploading, setIsUploading] = React.useState(false)
   const [query, setQuery] = React.useState("")
+  const [queryMode, setQueryMode] = React.useState<QueryMode>("chat")
   const [sourceLimit, setSourceLimit] = React.useState(5)
   const [requireCitations, setRequireCitations] = React.useState(false)
   const [messages, setMessages] = React.useState<ChatMessage[]>([])
+  const [searchResults, setSearchResults] = React.useState<Source[]>([])
+  const [searchQuery, setSearchQuery] = React.useState("")
   const [chatError, setChatError] = React.useState<string | null>(null)
   const [isChatting, setIsChatting] = React.useState(false)
   const [groupSummary, setGroupSummary] = React.useState<GroupSummary | null>(null)
@@ -153,7 +164,7 @@ export function App() {
   const [isRefreshingGroup, setIsRefreshingGroup] = React.useState(false)
   const [deleteTarget, setDeleteTarget] = React.useState<{ kind: "file"; fileSummary: FileSummary } | { kind: "group" } | null>(null)
 
-  async function refreshGroup() {
+  const refreshGroup = React.useCallback(async function refreshGroup() {
     const cleanGroupId = groupId.trim()
     if (!GROUP_ID_REGEX.test(cleanGroupId)) {
       setManagementError("Use a valid group id before refreshing.")
@@ -191,7 +202,7 @@ export function App() {
     } finally {
       setIsRefreshingGroup(false)
     }
-  }
+  }, [groupId])
 
   React.useEffect(() => {
     if (!taskId) {
@@ -235,14 +246,17 @@ export function App() {
   }, [taskId])
 
   React.useEffect(() => {
-    void refreshGroup()
-  }, [])
+    const timeoutId = window.setTimeout(() => void refreshGroup(), 0)
+    return () => window.clearTimeout(timeoutId)
+  }, [refreshGroup])
 
   React.useEffect(() => {
     if (taskStatus?.state === "SUCCESS") {
-      void refreshGroup()
+      const timeoutId = window.setTimeout(() => void refreshGroup(), 0)
+      return () => window.clearTimeout(timeoutId)
     }
-  }, [taskStatus?.state])
+    return undefined
+  }, [refreshGroup, taskStatus?.state])
 
   function pickFile(nextFile: File | undefined) {
     setUploadError(null)
@@ -323,6 +337,8 @@ export function App() {
         throw new Error(await readError(response))
       }
       setMessages([])
+      setSearchResults([])
+      setSearchQuery("")
       await refreshGroup()
     } catch (error) {
       setManagementError(error instanceof Error ? error.message : String(error))
@@ -353,6 +369,8 @@ export function App() {
       setGroupSummary(null)
       setIndexedFiles([])
       setMessages([])
+      setSearchResults([])
+      setSearchQuery("")
     } catch (error) {
       setManagementError(error instanceof Error ? error.message : String(error))
     }
@@ -368,22 +386,44 @@ export function App() {
     }
 
     if (!GROUP_ID_REGEX.test(cleanGroupId)) {
-      setChatError("Set a valid group id before chatting.")
+      setChatError(`Set a valid group id before ${queryMode === "chat" ? "chatting" : "searching"}.`)
       return
     }
 
-    const userMessage: ChatMessage = {
-      id: makeId(),
-      role: "user",
-      content: cleanQuery,
-    }
+    if (queryMode === "chat") {
+      const userMessage: ChatMessage = {
+        id: makeId(),
+        role: "user",
+        content: cleanQuery,
+      }
 
-    setMessages((current) => [...current, userMessage])
+      setMessages((current) => [...current, userMessage])
+    }
     setQuery("")
     setChatError(null)
     setIsChatting(true)
 
     try {
+      if (queryMode === "search") {
+        const response = await fetch(`${API_BASE_URL}/debug/search`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            query: cleanQuery,
+            group_id: cleanGroupId,
+            limit: sourceLimit,
+          }),
+        })
+        if (!response.ok) {
+          throw new Error(await readError(response))
+        }
+
+        const body = (await response.json()) as DebugSearchResponse
+        setSearchQuery(body.query)
+        setSearchResults(body.results)
+        return
+      }
+
       const response = await fetch(`${API_BASE_URL}/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -597,9 +637,9 @@ export function App() {
             </SheetTrigger>
             <SheetContent side="right" className="flex flex-col gap-6">
               <SheetHeader>
-                <SheetTitle>Chat Settings</SheetTitle>
+                <SheetTitle>Query Settings</SheetTitle>
                 <SheetDescription>
-                  Configure retrieval and grounding per request.
+                  Configure retrieval for both query modes and grounding for AI answers.
                 </SheetDescription>
               </SheetHeader>
 
@@ -623,13 +663,15 @@ export function App() {
                     className="mt-1"
                     type="checkbox"
                     checked={requireCitations}
+                    disabled={queryMode === "search"}
                     onChange={(event) => setRequireCitations(event.target.checked)}
                   />
                   <span>
                     <span className="block font-medium">Require source citations</span>
                     <span className="block text-xs text-muted-foreground">
-                      When enabled, uncited document answers are replaced with an
-                      insufficient-context response.
+                      {queryMode === "search"
+                        ? "Citation enforcement only applies when asking the AI."
+                        : "When enabled, uncited document answers are replaced with an insufficient-context response."}
                     </span>
                   </span>
                 </label>
@@ -639,16 +681,82 @@ export function App() {
         </section>
 
         <section className="flex min-h-[70svh] min-w-0 flex-col rounded-md border bg-card shadow-sm">
-          <div className="border-b p-4">
-            <h2 className="text-lg font-semibold tracking-normal">Chat</h2>
+          <div className="flex flex-col gap-3 border-b p-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <h2 className="text-lg font-semibold tracking-normal">
+                  {queryMode === "chat" ? "Ask AI" : "Search Vector DB"}
+                </h2>
+                <p className="text-sm text-muted-foreground">
+                  Current group: {groupId.trim() || "none"}
+                </p>
+              </div>
+              <div className="grid grid-cols-2 rounded-md border bg-muted p-1 text-sm">
+                <button
+                  type="button"
+                  className={`rounded-sm px-3 py-1.5 font-medium transition ${queryMode === "chat" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+                  onClick={() => setQueryMode("chat")}
+                >
+                  Ask AI
+                </button>
+                <button
+                  type="button"
+                  className={`rounded-sm px-3 py-1.5 font-medium transition ${queryMode === "search" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+                  onClick={() => setQueryMode("search")}
+                >
+                  Vector DB
+                </button>
+              </div>
+            </div>
             <p className="text-sm text-muted-foreground">
-              Current group: {groupId.trim() || "none"}
+              {queryMode === "chat"
+                ? "Ask the LLM to answer using retrieved chunks from the selected group."
+                : "Inspect raw vector-search matches directly from the selected group before any LLM generation."}
             </p>
           </div>
 
           <ScrollArea className="min-h-0 flex-1">
             <div className="flex flex-col gap-4 p-4">
-            {messages.length === 0 ? (
+            {queryMode === "search" ? (
+              searchResults.length === 0 ? (
+                <div className="flex min-h-40 items-center justify-center rounded-md border border-dashed px-4 text-center text-sm text-muted-foreground">
+                  Search the current group to inspect raw retrieval hits.
+                </div>
+              ) : (
+                <div className="flex flex-col gap-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+                    <p className="font-medium">
+                      {searchResults.length} raw results for "{searchQuery}"
+                    </p>
+                    <span className="text-muted-foreground">No LLM generation used</span>
+                  </div>
+                  {searchResults.map((result, index) => (
+                    <article
+                      key={`${result.chunk_id ?? result.file_id ?? "result"}-${index}`}
+                      className="rounded-md border bg-background p-3 text-sm"
+                    >
+                      <div className="mb-2 flex flex-wrap items-center gap-2 font-medium">
+                        <span>
+                          [{index + 1}] {result.filename ?? "source"}
+                          {result.page ? ` p.${result.page}` : ""}
+                        </span>
+                        <span className="rounded-sm bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
+                          score {formatScore(result.score)}
+                        </span>
+                        {result.group_id ? (
+                          <span className="rounded-sm bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
+                            {result.group_id}
+                          </span>
+                        ) : null}
+                      </div>
+                      <p className="whitespace-pre-wrap break-words leading-6 text-muted-foreground">
+                        {previewText(result.text)}
+                      </p>
+                    </article>
+                  ))}
+                </div>
+              )
+            ) : messages.length === 0 ? (
               <div className="flex min-h-40 items-center justify-center rounded-md border border-dashed text-sm text-muted-foreground">
                 Ask a question after indexing.
               </div>
@@ -756,7 +864,7 @@ export function App() {
                 className="h-10 min-w-0 flex-1 rounded-md border bg-background px-3 text-sm outline-none transition focus:border-ring focus:ring-3 focus:ring-ring/20"
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                placeholder="Ask about the indexed PDFs"
+                placeholder={queryMode === "chat" ? "Ask about the indexed PDFs" : "Search indexed chunks directly"}
               />
               <Button size="icon" type="submit" disabled={isChatting}>
                 {isChatting ? (

@@ -23,6 +23,7 @@ def fake_chat_dependencies():
                 {
                     "chunk_id": "chunk-1",
                     "file_id": "file-1",
+                    "vector": [0.01] * 384,
                     "text": "matched text",
                     "filename": "doc.pdf",
                     "page": 1,
@@ -331,3 +332,4 @@ class TestChat:
         assert response.status_code == 200
         body = response.json()
         assert body["results"][0]["chunk_id"] == "chunk-1"
+        assert "vector" not in body["results"][0]

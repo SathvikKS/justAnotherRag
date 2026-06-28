@@ -43,7 +43,7 @@ Management:
 2. `GET /groups/{group_id}/files` lists indexed files in a group.
 3. `DELETE /groups/{group_id}/files/{file_id}` permanently deletes chunks for one uploaded file.
 4. `DELETE /groups/{group_id}` permanently deletes all chunks in a group.
-5. `POST /debug/search` returns raw retrieval results for troubleshooting.
+5. `POST /debug/search` returns lightweight retrieval results for troubleshooting, excluding vectors and empty optional fields.
 
 ## Boundaries
 
