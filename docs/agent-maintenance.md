@@ -65,6 +65,7 @@ If yes, update the matching docs in the same change.
 - `/upload` returns a Celery task id, not ingestion results.
 - `/status/{task_id}` reads Celery state.
 - `rag_api.app:app` is the API entrypoint; `rag_api.routes` owns only the router.
+- `API_KEY` enables simple `X-API-Key` auth for mounted MCP requests only.
 - MCP is mounted at `/mcp` and must keep using shared providers/helpers rather than calling REST handlers.
 - `/chat` returns a generated `answer` and retrieval `sources`.
 - `/chat` bypasses retrieval for simple greetings.

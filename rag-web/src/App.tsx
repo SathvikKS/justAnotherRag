@@ -213,8 +213,8 @@ export function App() {
     setManagementError(null)
     try {
       const [groupResponse, filesResponse] = await Promise.all([
-        fetch(`${API_BASE_URL}/groups/${encodeURIComponent(cleanGroupId)}`),
-        fetch(`${API_BASE_URL}/groups/${encodeURIComponent(cleanGroupId)}/files`),
+          fetch(`${API_BASE_URL}/groups/${encodeURIComponent(cleanGroupId)}`),
+          fetch(`${API_BASE_URL}/groups/${encodeURIComponent(cleanGroupId)}/files`),
       ])
 
       if (groupResponse.status === 404) {

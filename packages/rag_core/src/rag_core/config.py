@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     llm_max_tokens: int = 512
     celery_broker_url: str = "redis://localhost:6379/0"
     celery_result_backend: str = "redis://localhost:6379/0"
+    api_key: str | None = None
     cors_origins: str = "http://localhost:3000,http://localhost:5173"
     aws_access_key_id: str | None = None
     aws_secret_access_key: str | None = None

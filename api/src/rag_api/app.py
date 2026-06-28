@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from rag_api.auth import require_api_key
 from rag_api.mcp_server import mcp
 from rag_api.routes import router
 from rag_core.config import get_settings
@@ -27,5 +28,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def api_key_middleware(request, call_next):
+    return await require_api_key(request, call_next)
+
+
 app.include_router(router)
 app.mount("/mcp", mcp.streamable_http_app())

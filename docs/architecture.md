@@ -42,10 +42,11 @@ Chat:
 MCP:
 
 1. Third-party agents connect to `POST /mcp` using Streamable HTTP.
-2. `rag_api.mcp_server` exposes retrieval and ingestion tools backed by the same `dependencies.py` providers as REST.
-3. `search_knowledge_base`, `list_groups`, `list_files`, and `get_chunk` talk directly to the embedder and LanceDB store.
-4. `upload_document` enqueues the same Celery ingestion task as `POST /upload`.
-5. `check_upload_status` reads the same Celery result state as `GET /status/{task_id}`.
+2. Parent FastAPI middleware optionally enforces `X-API-Key` for `/mcp` when `API_KEY` is configured.
+3. `rag_api.mcp_server` exposes retrieval and ingestion tools backed by the same `dependencies.py` providers as REST.
+4. `search_knowledge_base`, `list_groups`, `list_files`, and `get_chunk` talk directly to the embedder and LanceDB store.
+5. `upload_document` enqueues the same Celery ingestion task as `POST /upload`.
+6. `check_upload_status` reads the same Celery result state as `GET /status/{task_id}`.
 
 Management:
 
@@ -58,6 +59,7 @@ Management:
 ## Boundaries
 
 - API does not import SentenceTransformers, Torch, or vLLM.
+- MCP auth is API-key based only, read from `API_KEY`, with no user model or per-client identity.
 - MCP tools live in `mcp_server.py`, share `dependencies.py` and shared ingestion helpers, and never call REST route handlers.
 - Ingestion keeps parsing behind `DocumentParserBase` and currently uses Docling via LangChain.
 - Embedding service owns the LangChain embedding wrapper and the 384-dimension guard.
@@ -75,6 +77,7 @@ Settings:
 - `DOCLING_OCR_ENABLED`, `DOCLING_OCR_ENGINE`, `DOCLING_OCR_LANGS`, `DOCLING_RAPIDOCR_BACKEND`, `DOCLING_FORCE_BACKEND_TEXT`, `DOCLING_WARMUP_ENABLED`
 - `LLM_GRPC_URL`, `LLM_MODEL`, `LLM_MAX_TOKENS`, `VLLM_GPU_MEMORY_UTIL`
 - `CELERY_BROKER_URL`, `CELERY_RESULT_BACKEND`
+- `API_KEY`
 - `CORS_ORIGINS`
 - AWS credential fields for LanceDB S3 storage
 

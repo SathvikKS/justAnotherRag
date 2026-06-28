@@ -1,10 +1,16 @@
 import pytest
 from fastapi.testclient import TestClient
 
+import rag_api.app as app_module
 from rag_api.dependencies import get_embedding_engine, get_llm_client, get_vector_store
 from rag_api.app import app
 
 client = TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def clear_api_key(monkeypatch):
+    monkeypatch.setattr(app_module.settings, "api_key", None)
 
 
 @pytest.fixture(autouse=True)
@@ -77,6 +83,30 @@ def fake_chat_dependencies():
 
 
 class TestUpload:
+    def test_requires_api_key_when_configured(self, monkeypatch):
+        monkeypatch.setattr(app_module.settings, "api_key", "secret-key")
+
+        response = client.post("/upload", data={"group_id": "test-group"})
+
+        assert response.status_code == 422
+
+    def test_accepts_api_key_when_configured(self, monkeypatch):
+        monkeypatch.setattr(app_module.settings, "api_key", "secret-key")
+
+        class FakeCelery:
+            def send_task(self, name, args):
+                return type("Result", (), {"id": "task-123"})()
+
+        monkeypatch.setattr("rag_api.ingestion.celery_app", FakeCelery())
+
+        response = client.post(
+            "/upload",
+            files={"file": ("doc.pdf", b"%PDF-1.4 fake", "application/pdf")},
+            data={"group_id": "test-group"},
+        )
+
+        assert response.status_code == 200
+
     def test_no_file_returns_422(self):
         response = client.post("/upload", data={"group_id": "test-group"})
         assert response.status_code == 422
@@ -166,6 +196,20 @@ class TestUpload:
 
 
 class TestChat:
+    def test_mcp_mount_requires_api_key_when_configured(self, monkeypatch):
+        monkeypatch.setattr(app_module.settings, "api_key", "secret-key")
+
+        response = client.post("/mcp")
+
+        assert response.status_code == 401
+
+    def test_docs_remain_public_when_api_key_is_enabled(self, monkeypatch):
+        monkeypatch.setattr(app_module.settings, "api_key", "secret-key")
+
+        response = client.get("/docs")
+
+        assert response.status_code == 200
+
     def test_blank_query_returns_422(self):
         response = client.post(
             "/chat",

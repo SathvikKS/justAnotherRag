@@ -49,6 +49,7 @@ LLM_MODEL=Qwen/Qwen2.5-3B-Instruct
 VLLM_GPU_MEMORY_UTIL=0.88
 CELERY_BROKER_URL=redis://localhost:6379/0
 CELERY_RESULT_BACKEND=redis://localhost:6379/0
+API_KEY=dev-api-key
 
 # Model Cache Paths (Local Dev)
 HF_HOME=../model_cache/huggingface
@@ -57,6 +58,8 @@ HF_HOME=../model_cache/huggingface
 For local filesystem LanceDB storage shared by API and ingestion, set `LANCEDB_URI=../lancedb_data` in both `api/.env` and `ingestion/.env`.
 
 If Redis requires a password, set the passworded `CELERY_BROKER_URL` and `CELERY_RESULT_BACKEND` in both `api/.env` and `ingestion/.env`.
+
+Set `API_KEY` in `api/.env` to require `X-API-Key` on `/mcp` requests only. Leave it unset to disable MCP auth for local-only development.
 
 Docling OCR is configured only in `ingestion/.env`. `DOCLING_OCR_ENGINE=auto` is the default. On this Windows environment, `rapidocr` needs `onnxruntime` installed to avoid falling back to an unsupported torch OCR path.
 
@@ -247,6 +250,8 @@ MCP tools for third-party agents:
 ```powershell
 claude mcp add --transport http local-rag http://localhost:8000/mcp
 ```
+
+Configure MCP clients to send `X-API-Key: <API_KEY>` when MCP auth is enabled.
 
 The mounted MCP server exposes retrieval and ingestion tools only: `search_knowledge_base`, `list_groups`, `list_files`, `get_chunk`, `upload_document`, and `check_upload_status`. It shares the API's dependency providers directly and does not call back into REST routes.
 

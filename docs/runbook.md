@@ -37,6 +37,7 @@ LLM_MAX_TOKENS=512
 VLLM_GPU_MEMORY_UTIL=0.88
 CELERY_BROKER_URL=redis://localhost:6379/0
 CELERY_RESULT_BACKEND=redis://localhost:6379/0
+API_KEY=dev-api-key
 
 # Model Cache Paths (Local Dev)
 HF_HOME=../model_cache/huggingface
@@ -45,6 +46,8 @@ HF_HOME=../model_cache/huggingface
 Compose also reads those service `.env` files with `env_file`. It overrides hostnames to Docker network names: `redis_broker:6379`, `embedding_service:50051`, and `llm_service:50052`.
 
 If Redis requires a password, put the same passworded Redis URLs in `api/.env` and `ingestion/.env`.
+
+When `API_KEY` is set in `api/.env`, `/mcp` requests must send `X-API-Key: <API_KEY>`. Leave it unset to disable MCP auth.
 
 ## Local Services
 
@@ -201,6 +204,8 @@ MCP endpoint:
 claude mcp add --transport http local-rag http://localhost:8000/mcp
 ```
 
+Configure the MCP client to send `X-API-Key: <API_KEY>` when `API_KEY` is enabled.
+
 Mounted MCP tools:
 
 - `search_knowledge_base`
@@ -267,6 +272,7 @@ curl -X POST http://localhost:8000/debug/search -H "Content-Type: application/js
 
 - Confirm `embedding_service` is reachable from API.
 - Confirm `llm_service` is reachable from API.
+- If MCP requests fail with `401`, confirm the client sends `X-API-Key` matching `API_KEY`.
 - If using mock mode, confirm API has `LLM_PROVIDER=mock`.
 - Confirm LanceDB URI and AWS settings are valid.
 - Use `/debug/search` to inspect raw retrieved chunks and score fields.
