@@ -28,8 +28,33 @@ class VectorStoreBase(ABC):
     ) -> list[dict]:
         ...
 
+    @abstractmethod
+    def list_groups(self) -> list[dict]:
+        ...
+
+    @abstractmethod
+    def get_group(self, group_id: str) -> dict | None:
+        ...
+
+    @abstractmethod
+    def list_files(self, group_id: str) -> list[dict]:
+        ...
+
+    @abstractmethod
+    def delete_group(self, group_id: str) -> int:
+        ...
+
+    @abstractmethod
+    def delete_file(self, group_id: str, file_id: str) -> int:
+        ...
+
 
 class LLMClientBase(ABC):
     @abstractmethod
-    def generate_response(self, prompt: str, context: list[str]) -> str:
+    def generate_response(
+        self,
+        prompt: str,
+        context: list[str],
+        require_citations: bool = False,
+    ) -> str:
         ...

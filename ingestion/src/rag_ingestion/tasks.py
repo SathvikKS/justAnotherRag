@@ -1,4 +1,5 @@
 import uuid
+from datetime import UTC, datetime
 from pathlib import Path
 
 from celery import Celery
@@ -35,25 +36,33 @@ def process_document_task(file_bytes: bytes, filename: str, group_id: str) -> di
     embedder = get_embedder()
     store = LanceDBStore()
 
+    file_id = str(uuid.uuid4())
+    created_at = datetime.now(UTC).isoformat()
     parsed_chunks = parser.extract_text(file_bytes, filename)
     vectors = embedder.embed_texts([chunk["text"] for chunk in parsed_chunks])
     records = []
-    for chunk, vector in zip(parsed_chunks, vectors, strict=True):
+    for chunk_index, (chunk, vector) in enumerate(zip(parsed_chunks, vectors, strict=True)):
         metadata = chunk.get("metadata", {})
         records.append(
             {
                 "chunk_id": str(uuid.uuid4()),
+                "file_id": file_id,
                 "vector": vector,
                 "text": chunk["text"],
                 "group_id": group_id,
                 "filename": metadata.get("filename", filename),
                 "page": metadata.get("page"),
+                "created_at": created_at,
+                "chunk_index": chunk_index,
+                "text_quality": metadata.get("text_quality", "ok"),
             }
         )
 
     store.upsert(records)
     return {
+        "file_id": file_id,
         "filename": filename,
         "group_id": group_id,
         "chunks_indexed": len(records),
+        "chunks_skipped": getattr(parser, "last_skipped", 0),
     }

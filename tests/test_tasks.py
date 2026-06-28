@@ -32,11 +32,14 @@ def test_process_document_task_runs_pipeline(monkeypatch):
 
     result = tasks.process_document_task.run(b"%PDF", "doc.pdf", "group-a")
 
-    assert result == {
-        "filename": "doc.pdf",
-        "group_id": "group-a",
-        "chunks_indexed": 2,
-    }
+    assert result["filename"] == "doc.pdf"
+    assert result["group_id"] == "group-a"
+    assert result["chunks_indexed"] == 2
+    assert result["chunks_skipped"] == 0
+    assert isinstance(result["file_id"], str)
     assert len(stores[0].records) == 2
     assert stores[0].records[0]["group_id"] == "group-a"
+    assert stores[0].records[0]["file_id"] == result["file_id"]
+    assert stores[0].records[0]["chunk_index"] == 0
+    assert stores[0].records[0]["text_quality"] == "ok"
     assert stores[0].records[0]["vector"] == [5.0] * 384

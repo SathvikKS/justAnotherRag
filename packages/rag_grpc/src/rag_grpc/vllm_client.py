@@ -5,12 +5,21 @@ class MockLlmGrpcClient:
     def __init__(self, target: str | None = None):
         self.target = target or get_settings().llm_grpc_url
 
-    def generate_response(self, prompt: str, context: list[str]) -> str:
+    def generate_response(
+        self,
+        prompt: str,
+        context: list[str],
+        require_citations: bool = False,
+    ) -> str:
         import json
 
         import grpc
 
-        payload = {"prompt": prompt, "context": context}
+        payload = {
+            "prompt": prompt,
+            "context": context,
+            "require_citations": require_citations,
+        }
         with grpc.insecure_channel(self.target) as channel:
             call = channel.unary_unary(
                 "/rag.llm.LLM/Generate",
@@ -40,12 +49,77 @@ class VllmGrpcClient:
             self._tokenizer = AutoTokenizer.from_pretrained(self.model)
         return self._tokenizer
 
-    def generate_response(self, prompt: str, context: list[str]) -> str:
+    def _render_prompt(
+        self,
+        prompt: str,
+        context: list[str],
+        require_citations: bool = False,
+    ) -> str:
+        if context:
+            context_text = "\n\n".join(
+                f"[{index}] {text}" for index, text in enumerate(context, start=1)
+            )
+        else:
+            context_text = "No retrieved context was provided."
+
+        user_content = (
+            "Context:\n"
+            f"{context_text}\n\n"
+            "User request:\n"
+            f"{prompt}\n\n"
+            "Answer:"
+        )
+        citation_instruction = (
+            " Every factual claim must include citations using the provided "
+            "source numbers like [1]. For topic or keyword requests, summarize "
+            "what the provided context says about that topic with citations. "
+            "If the context does not explicitly support an answer, respond "
+            "exactly: I don't have enough information in the provided documents."
+            if require_citations
+            else ""
+        )
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "You are a document QA assistant. Use only the provided "
+                    "context to answer the user's request. If the user provides "
+                    "only a topic or keyword, summarize what the context says "
+                    "about that topic. If the context is irrelevant or "
+                    "insufficient, say you do not have enough information. Do "
+                    "not translate, summarize unrelated content, or invent facts "
+                    "unless the user asks."
+                    f"{citation_instruction}"
+                ),
+            },
+            {"role": "user", "content": user_content},
+        ]
+        tokenizer = self._get_tokenizer()
+        if getattr(tokenizer, "chat_template", None):
+            return tokenizer.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=True,
+            )
+        return "\n\n".join(
+            [
+                f"System: {messages[0]['content']}",
+                f"User: {messages[1]['content']}",
+                "Assistant:",
+            ]
+        )
+
+    def generate_response(
+        self,
+        prompt: str,
+        context: list[str],
+        require_citations: bool = False,
+    ) -> str:
         import grpc
 
         from rag_grpc.vllm_proto import vllm_engine_pb2, vllm_engine_pb2_grpc
 
-        prompt_text = "\n\n".join([*context, prompt])
+        prompt_text = self._render_prompt(prompt, context, require_citations)
         request = vllm_engine_pb2.GenerateRequest(
             request_id="rag-chat",
             text=prompt_text,

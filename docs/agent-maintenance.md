@@ -65,6 +65,11 @@ If yes, update the matching docs in the same change.
 - `/upload` returns a Celery task id, not ingestion results.
 - `/status/{task_id}` reads Celery state.
 - `/chat` returns a generated `answer` and retrieval `sources`.
+- `/chat` bypasses retrieval for simple greetings.
+- `/chat` supports request-level citation enforcement; keep it off by default unless the UI/request enables it.
+- vLLM prompts should use tokenizer chat templates when available, not hard-coded per-model templates.
+- Group/file CRUD endpoints delete LanceDB chunk rows permanently.
+- Re-uploading the same filename creates a new `file_id`.
 - API and ingestion must not import SentenceTransformers, Torch, or vLLM.
 - Embedding model dependencies live in `embedding/`.
 - vLLM dependencies live in `llm/`.

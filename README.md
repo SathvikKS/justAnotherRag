@@ -19,7 +19,9 @@ The Python side is a uv workspace with separate root services:
 - Embed queries and chunks through `embedding_service`.
 - Store chunks in LanceDB with 384-dimensional vectors.
 - Search LanceDB with hybrid vector plus text search, filtered by `group_id`.
-- Generate `/chat` answers through `llm_service`.
+- Generate `/chat` answers through `llm_service` with a structured RAG prompt and tokenizer-native chat template rendering.
+- Bypass retrieval for simple greetings and return no sources.
+- List and permanently delete indexed files or whole groups without deleting the LanceDB directory.
 - Run GPU-first Docker Compose, or add the CPU override.
 
 ## Environment
@@ -36,6 +38,7 @@ EMBEDDING_GRPC_URL=localhost:50051
 LLM_PROVIDER=mock
 LLM_GRPC_URL=localhost:50052
 LLM_MODEL=Qwen/Qwen2.5-3B-Instruct
+VLLM_GPU_MEMORY_UTIL=0.88
 CELERY_BROKER_URL=redis://localhost:6379/0
 CELERY_RESULT_BACKEND=redis://localhost:6379/0
 ```
@@ -75,20 +78,25 @@ uv run python -m rag_embedding.server
 
 LLM GPU (Linux/WSL2):
 
-```powershell
-cd llm
-copy .env.example .env
-uv sync --extra gpu --index-strategy unsafe-best-match
-uv run python -m rag_llm.serve
-```
+* Avoid venv conflicts between Windows and WSL:
+  ```bash
+  export UV_PROJECT_ENVIRONMENT=~/rag/.venv
+  ```
+* Run the LLM server (requires CUDA Toolkit — see [CUDA Toolkit Setup](#cuda-toolkit-setup-wsl2) below):
+  ```bash
+  cd llm
+  cp .env.example .env
+  uv sync --extra gpu --index-strategy unsafe-best-match
+  uv run --extra gpu python -m rag_llm.serve
+  ```
 
 LLM CPU (Linux/WSL2):
 
-```powershell
+```bash
 cd llm
-copy .env.example .env
+cp .env.example .env
 VLLM_TARGET_DEVICE=cpu uv sync --extra cpu --torch-backend cpu
-uv run python -m rag_llm.serve
+uv run --extra cpu python -m rag_llm.serve
 ```
 
 LLM mock:
@@ -103,6 +111,8 @@ uv run python -m rag_llm.mock_server
 Set `LLM_PROVIDER=mock` in the API environment when using the mock server. It returns `Mock answer for: <query>` without loading vLLM.
 
 Native vLLM CPU/GPU extras do not install on Windows. Use WSL2, Docker, or mock mode there.
+
+
 
 Web:
 
@@ -133,7 +143,7 @@ Services:
 - vLLM gRPC: `localhost:50052`
 
 Docker defaults to `Qwen/Qwen2.5-3B-Instruct`. Override with `LLM_MODEL`.
-Set `VLLM_GPU_MEMORY_UTIL` to tune vLLM GPU memory reservation when needed.
+`VLLM_GPU_MEMORY_UTIL` defaults to `0.88` and is passed to vLLM as `--gpu-memory-utilization`; lower it to reserve less VRAM for vLLM KV cache and CUDA graph pools on smaller GPUs.
 
 ## API
 
@@ -160,6 +170,40 @@ Response:
 }
 ```
 
+List groups:
+
+```powershell
+curl http://localhost:8000/groups
+```
+
+List files in a group:
+
+```powershell
+curl http://localhost:8000/groups/demo/files
+```
+
+Delete one indexed file's embeddings:
+
+```powershell
+curl -X DELETE http://localhost:8000/groups/demo/files/<file_id>
+```
+
+Delete all embeddings in a group:
+
+```powershell
+curl -X DELETE http://localhost:8000/groups/demo
+```
+
+Deletes are permanent. Re-uploading the same filename creates a new `file_id`.
+
+Inspect raw retrieval output:
+
+```powershell
+curl -X POST http://localhost:8000/debug/search -H "Content-Type: application/json" -d "{\"query\":\"What is this document about?\",\"group_id\":\"demo\",\"limit\":5}"
+```
+
+The web client also shows indexed files for the current group and exposes refresh/delete controls in the sidebar. Chat settings let users choose how many source chunks to retrieve (`5` by default) and whether to require source citations. Assistant messages include a grounding badge: cited responses show valid source citations, uncited responses can be rejected when citation enforcement is enabled, and direct responses such as greetings show that no document sources were supplied.
+
 ## Test
 
 ```powershell
@@ -171,4 +215,51 @@ Compose validation:
 ```powershell
 docker compose config
 docker compose -f docker-compose.yml -f docker-compose.cpu.yml config
+```
+
+## Appendix
+
+### CUDA Toolkit Setup (WSL2)
+
+vLLM's `flashinfer` dependency JIT-compiles CUDA kernels at runtime and requires the CUDA Toolkit (`nvcc`) installed as a system package. PyTorch/vLLM wheels already include the CUDA runtime — only the compiler toolchain is missing.
+
+Choose a CUDA version that matches your PyTorch/vLLM wheel target (e.g. `cu129` → CUDA 12.9):
+
+```bash
+# Set the desired version
+CUDA_VER=12.9
+wget https://developer.download.nvidia.com/compute/cuda/repos/wsl-ubuntu/x86_64/cuda-wsl-ubuntu.pin
+sudo mv cuda-wsl-ubuntu.pin /etc/apt/preferences.d/cuda-repository-pin-600
+wget "https://developer.download.nvidia.com/compute/cuda/${CUDA_VER}.0/local_installers/cuda-repo-wsl-ubuntu-${CUDA_VER/./-}-local_${CUDA_VER}.0-1_amd64.deb"
+sudo dpkg -i "cuda-repo-wsl-ubuntu-${CUDA_VER/./-}-local_${CUDA_VER}.0-1_amd64.deb"
+sudo cp "/var/cuda-repo-wsl-ubuntu-${CUDA_VER/./-}-local/cuda-*-keyring.gpg" /usr/share/keyrings/
+sudo apt-get update
+sudo apt-get -y install "cuda-toolkit-${CUDA_VER/./-}"
+```
+
+Add to `~/.bashrc` so `nvcc` is always on PATH:
+
+```bash
+export CUDA_HOME="/usr/local/cuda-${CUDA_VER}"
+export PATH="$CUDA_HOME/bin:$PATH"
+export LD_LIBRARY_PATH="$CUDA_HOME/lib64:$LD_LIBRARY_PATH"
+```
+
+Verification:
+
+```bash
+nvcc --version
+```
+
+Multiple CUDA versions can coexist (e.g. `/usr/local/cuda-12.9` and `/usr/local/cuda-13.3`). Switch between them by changing `CUDA_HOME` and `PATH` — update `~/.bashrc` or export in the current shell:
+
+```bash
+export CUDA_HOME=/usr/local/cuda-13.3
+export PATH="$CUDA_HOME/bin:$PATH"
+```
+
+To remove an unused version:
+
+```bash
+sudo apt remove cuda-toolkit-13-3
 ```

@@ -28,6 +28,7 @@ LLM_PROVIDER=mock
 LLM_GRPC_URL=localhost:50052
 LLM_MODEL=Qwen/Qwen2.5-3B-Instruct
 LLM_MAX_TOKENS=512
+VLLM_GPU_MEMORY_UTIL=0.88
 CELERY_BROKER_URL=redis://localhost:6379/0
 CELERY_RESULT_BACKEND=redis://localhost:6379/0
 ```
@@ -99,7 +100,7 @@ The `llm/pyproject.toml` extras route `vllm` and `torch` to different indexes:
 - `gpu`: `https://wheels.vllm.ai/0.23.0/cu129` and `https://download.pytorch.org/whl/cu129`
 - `cpu`: `https://wheels.vllm.ai/0.23.0/cpu` and `https://download.pytorch.org/whl/cpu`
 
-The gRPC server defaults to `Qwen/Qwen2.5-3B-Instruct`; override with `LLM_MODEL`. Set `VLLM_GPU_MEMORY_UTIL` if the default `0.88` reservation is too high or low for your GPU.
+The gRPC server defaults to `Qwen/Qwen2.5-3B-Instruct`; override with `LLM_MODEL`. `VLLM_GPU_MEMORY_UTIL` defaults to `0.88` and maps to vLLM `--gpu-memory-utilization`; lower it to reduce VRAM reserved for KV cache/CUDA graph pools, or raise it only if the GPU has enough headroom.
 
 On Windows, use WSL2, Docker CPU mode, or the mock server for local LLM work.
 
@@ -169,6 +170,48 @@ curl -X POST http://localhost:8000/chat -H "Content-Type: application/json" -d "
 
 Response has `answer` and `sources`.
 
+Greeting and assistant small-talk queries such as `hi`, `who are you`, and `where are you` bypass retrieval and return no sources.
+
+The web chat shows a grounding badge on assistant messages. Chat settings let users choose the retrieval limit (`5` by default) and toggle citation enforcement per request. When citation enforcement is off, the badge only confirms that source chunks were supplied. When citation enforcement is on, uncited document answers are replaced with `I don't have enough information in the provided documents.` `No document sources supplied` means the answer did not use retrieved chunks.
+
+List indexed groups:
+
+```powershell
+curl http://localhost:8000/groups
+```
+
+Inspect one group:
+
+```powershell
+curl http://localhost:8000/groups/demo
+```
+
+List files in a group:
+
+```powershell
+curl http://localhost:8000/groups/demo/files
+```
+
+Delete one file's embeddings:
+
+```powershell
+curl -X DELETE http://localhost:8000/groups/demo/files/<file_id>
+```
+
+Delete all embeddings in a group:
+
+```powershell
+curl -X DELETE http://localhost:8000/groups/demo
+```
+
+Deletes are permanent. Re-uploading the same filename creates a new `file_id`.
+
+Debug retrieval:
+
+```powershell
+curl -X POST http://localhost:8000/debug/search -H "Content-Type: application/json" -d "{\"query\":\"What is this document about?\",\"group_id\":\"demo\",\"limit\":5}"
+```
+
 ## Troubleshooting
 
 `/status/{task_id}` stays `PENDING`:
@@ -184,11 +227,14 @@ Response has `answer` and `sources`.
 - Confirm `llm_service` is reachable from API.
 - If using mock mode, confirm API has `LLM_PROVIDER=mock`.
 - Confirm LanceDB URI and AWS settings are valid.
+- Use `/debug/search` to inspect raw retrieved chunks and score fields.
+- If greetings produce document sources, confirm the API process is running the latest code.
 
 Worker failure:
 
 - Malformed PDF.
 - Image-only PDF with no extractable text.
+- Extracted text filtered as mojibake/low-signal text.
 - Embedding model download/cache failure.
 - LanceDB write failure.
 - `RESOURCE_EXHAUSTED` (gRPC message larger than max 4MB). Resolved by batching embedding requests in chunks of 128 in `EmbeddingClient.embed_texts`.
@@ -202,5 +248,5 @@ uv run pytest -q -p no:cacheprovider
 Current expected result:
 
 ```text
-20 passed
+30 passed
 ```

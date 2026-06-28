@@ -13,7 +13,7 @@ def test_api_dependencies_load_service_env(monkeypatch):
     get_settings.cache_clear()
     settings = get_settings()
 
-    assert settings.lancedb_uri == "./lancedb_data"
+    assert settings.lancedb_uri == "../lancedb_data"
 
 
 def test_ingestion_tasks_load_service_env(monkeypatch):

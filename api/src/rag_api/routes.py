@@ -40,6 +40,7 @@ class ChatRequest(BaseModel):
     query: str = Field(..., min_length=1)
     group_id: str
     limit: int = Field(5, ge=1, le=20)
+    require_citations: bool = False
 
     @field_validator("group_id")
     @classmethod
@@ -53,6 +54,8 @@ class ChatRequest(BaseModel):
 
 class Source(BaseModel):
     text: str
+    chunk_id: str | None = None
+    file_id: str | None = None
     filename: str | None = None
     page: int | None = None
     group_id: str | None = None
@@ -64,6 +67,120 @@ class ChatResponse(BaseModel):
     group_id: str
     answer: str
     sources: list[Source]
+    grounding: dict
+
+
+class GroupSummary(BaseModel):
+    group_id: str
+    chunks: int
+    files: int
+    created_at: str | None = None
+
+
+class FileSummary(BaseModel):
+    file_id: str
+    filename: str
+    group_id: str
+    chunks: int
+    pages: list[int]
+    created_at: str | None = None
+    legacy: bool = False
+
+
+class DeleteResponse(BaseModel):
+    deleted_chunks: int
+
+
+class DebugSearchRequest(ChatRequest):
+    pass
+
+
+class DebugSearchResponse(BaseModel):
+    query: str
+    group_id: str
+    results: list[dict]
+
+
+SMALL_TALK_RESPONSES = {
+    "hi": "Hi! Ask me a question about your uploaded documents.",
+    "hello": "Hello! Ask me a question about your uploaded documents.",
+    "hey": "Hey! Ask me a question about your uploaded documents.",
+    "thanks": "You're welcome. Ask me another document question when you're ready.",
+    "thank you": "You're welcome. Ask me another document question when you're ready.",
+    "where are you": "I'm running locally as your document assistant. Ask me a question about your uploaded documents when you're ready.",
+    "where do you live": "I'm running locally as your document assistant. Ask me a question about your uploaded documents when you're ready.",
+    "who are you": "I'm your local RAG assistant for answering questions about uploaded documents.",
+    "what are you": "I'm your local RAG assistant for answering questions about uploaded documents.",
+}
+
+
+def small_talk_answer(query: str) -> str | None:
+    normalized = re.sub(r"\s+", " ", query.strip().lower().rstrip(".!?"))
+    if normalized in SMALL_TALK_RESPONSES:
+        return SMALL_TALK_RESPONSES[normalized]
+    if normalized.startswith(("where are you", "where do you live")):
+        return SMALL_TALK_RESPONSES["where are you"]
+    if normalized.startswith(("who are you", "what are you")):
+        return SMALL_TALK_RESPONSES["who are you"]
+    return None
+
+
+def score_from_result(item: dict) -> float | None:
+    for key in ("score", "_relevance_score", "_score", "_distance"):
+        value = item.get(key)
+        if value is not None:
+            return float(value)
+    return None
+
+
+def source_from_result(item: dict) -> Source:
+    return Source(
+        text=item["text"],
+        chunk_id=item.get("chunk_id"),
+        file_id=item.get("file_id"),
+        filename=item.get("filename"),
+        page=item.get("page"),
+        group_id=item.get("group_id"),
+        score=score_from_result(item),
+    )
+
+
+def valid_citations(answer: str, source_count: int) -> list[int]:
+    citations = sorted({int(match) for match in re.findall(r"\[(\d+)\]", answer)})
+    return [citation for citation in citations if 1 <= citation <= source_count]
+
+
+def grounding_status(
+    sources: list[Source],
+    require_citations: bool,
+    answer: str,
+) -> dict:
+    if not sources:
+        return {
+            "mode": "no_retrieval",
+            "sources_supplied": 0,
+            "citations_required": require_citations,
+            "citations_found": [],
+            "status": "no_retrieval",
+        }
+
+    if not require_citations:
+        return {
+            "mode": "document",
+            "sources_supplied": len(sources),
+            "citations_required": False,
+            "citations_found": [],
+            "status": "document_context_supplied",
+        }
+
+    citations = valid_citations(answer, len(sources))
+    return {
+        "mode": "document",
+        "sources_supplied": len(sources),
+        "citations_required": True,
+        "citations_found": citations,
+        "status": "cited" if citations else "rejected_uncited",
+    }
 
 
 @app.post("/upload")
@@ -109,12 +226,108 @@ def status(task_id: str):
     return body
 
 
+@app.get("/groups", response_model=list[GroupSummary])
+def list_groups(store: VectorStoreBase = Depends(get_vector_store)):
+    return store.list_groups()
+
+
+@app.get("/groups/{group_id}", response_model=GroupSummary)
+def get_group(group_id: str, store: VectorStoreBase = Depends(get_vector_store)):
+    try:
+        group = store.get_group(group_id)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    if group is None:
+        raise HTTPException(404, "Group not found")
+    return group
+
+
+@app.delete("/groups/{group_id}", response_model=DeleteResponse)
+def delete_group(group_id: str, store: VectorStoreBase = Depends(get_vector_store)):
+    try:
+        deleted = store.delete_group(group_id)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    return DeleteResponse(deleted_chunks=deleted)
+
+
+@app.get("/groups/{group_id}/files", response_model=list[FileSummary])
+def list_files(group_id: str, store: VectorStoreBase = Depends(get_vector_store)):
+    try:
+        return store.list_files(group_id)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+
+
+@app.delete("/groups/{group_id}/files/{file_id:path}", response_model=DeleteResponse)
+def delete_file(
+    group_id: str,
+    file_id: str,
+    store: VectorStoreBase = Depends(get_vector_store),
+):
+    try:
+        deleted = store.delete_file(group_id, file_id)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    return DeleteResponse(deleted_chunks=deleted)
+
+
 @app.post("/chat", response_model=ChatResponse)
 def chat(
     payload: ChatRequest,
     embedder: EmbeddingEngineBase = Depends(get_embedding_engine),
     store: VectorStoreBase = Depends(get_vector_store),
     llm: LLMClientBase = Depends(get_llm_client),
+):
+    try:
+        direct_answer = small_talk_answer(payload.query)
+        if direct_answer:
+            return ChatResponse(
+                query=payload.query,
+                group_id=payload.group_id,
+                answer=direct_answer,
+                sources=[],
+                grounding=grounding_status([], payload.require_citations, direct_answer),
+            )
+
+        query_vector = embedder.embed_text(payload.query)
+        results = store.search(
+            query_vector=query_vector,
+            query_text=payload.query,
+            group_id=payload.group_id,
+            limit=payload.limit,
+        )
+        sources = [source_from_result(item) for item in results]
+        context = [
+            f"{source.filename or 'source'}"
+            f"{f' p.{source.page}' if source.page else ''}\n{source.text}"
+            for source in sources
+        ]
+        answer = llm.generate_response(
+            payload.query,
+            context,
+            require_citations=payload.require_citations,
+        )
+        grounding = grounding_status(sources, payload.require_citations, answer)
+        if payload.require_citations and grounding["status"] == "rejected_uncited":
+            answer = "I don't have enough information in the provided documents."
+    except Exception as e:
+        raise HTTPException(500, f"Chat query failed: {e}")
+
+    return ChatResponse(
+        query=payload.query,
+        group_id=payload.group_id,
+        answer=answer,
+        sources=sources,
+        grounding=grounding,
+    )
+
+
+@app.post("/debug/search", response_model=DebugSearchResponse)
+def debug_search(
+    payload: DebugSearchRequest,
+    embedder: EmbeddingEngineBase = Depends(get_embedding_engine),
+    store: VectorStoreBase = Depends(get_vector_store),
 ):
     try:
         query_vector = embedder.embed_text(payload.query)
@@ -124,23 +337,11 @@ def chat(
             group_id=payload.group_id,
             limit=payload.limit,
         )
-        sources = [
-            Source(
-                text=item["text"],
-                filename=item.get("filename"),
-                page=item.get("page"),
-                group_id=item.get("group_id"),
-                score=item.get("_distance"),
-            )
-            for item in results
-        ]
-        answer = llm.generate_response(payload.query, [source.text for source in sources])
     except Exception as e:
-        raise HTTPException(500, f"Chat query failed: {e}")
+        raise HTTPException(500, f"Debug search failed: {e}")
 
-    return ChatResponse(
+    return DebugSearchResponse(
         query=payload.query,
         group_id=payload.group_id,
-        answer=answer,
-        sources=sources,
+        results=results,
     )

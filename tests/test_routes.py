@@ -14,21 +14,54 @@ def fake_chat_dependencies():
             return [0.01] * 384
 
     class FakeStore:
+        def __init__(self):
+            self.search_calls = []
+
         def search(self, query_vector, query_text, group_id=None, limit=5):
+            self.search_calls.append(query_text)
             return [
                 {
+                    "chunk_id": "chunk-1",
+                    "file_id": "file-1",
                     "text": "matched text",
                     "filename": "doc.pdf",
                     "page": 1,
                     "group_id": group_id,
-                    "_distance": 0.1,
+                    "score": 0.9,
                 }
             ][:limit]
 
+        def list_groups(self):
+            return [{"group_id": "safe-id", "chunks": 1, "files": 1}]
+
+        def get_group(self, group_id):
+            if group_id == "missing":
+                return None
+            return {"group_id": group_id, "chunks": 1, "files": 1}
+
+        def list_files(self, group_id):
+            return [
+                {
+                    "file_id": "file-1",
+                    "filename": "doc.pdf",
+                    "group_id": group_id,
+                    "chunks": 1,
+                    "pages": [1],
+                    "legacy": False,
+                }
+            ]
+
+        def delete_group(self, group_id):
+            return 1
+
+        def delete_file(self, group_id, file_id):
+            return 1
+
     class FakeLLM:
-        def generate_response(self, prompt, context):
+        def generate_response(self, prompt, context, require_citations=False):
             assert prompt == "test query"
-            assert context == ["matched text"]
+            assert context == ["doc.pdf p.1\nmatched text"]
+            assert require_citations is False
             return "generated answer"
 
     app.dependency_overrides[get_embedding_engine] = lambda: FakeEmbedder()
@@ -181,3 +214,106 @@ class TestChat:
         assert body["group_id"] == "safe-id"
         assert body["answer"] == "generated answer"
         assert isinstance(body["sources"], list)
+        assert body["sources"][0]["file_id"] == "file-1"
+        assert body["sources"][0]["score"] == 0.9
+        assert body["grounding"]["status"] == "document_context_supplied"
+
+    def test_greeting_bypasses_retrieval(self):
+        response = client.post(
+            "/chat",
+            json={"query": "hi", "group_id": "safe-id", "limit": 5},
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["answer"] == "Hi! Ask me a question about your uploaded documents."
+        assert body["sources"] == []
+        assert body["grounding"]["status"] == "no_retrieval"
+
+    def test_assistant_location_bypasses_retrieval(self):
+        response = client.post(
+            "/chat",
+            json={
+                "query": "where are you",
+                "group_id": "safe-id",
+                "limit": 5,
+                "require_citations": False,
+            },
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["answer"].startswith("I'm running locally")
+        assert body["sources"] == []
+        assert body["grounding"]["status"] == "no_retrieval"
+
+    def test_required_citations_rejects_uncited_answer(self):
+        class FakeLLM:
+            def generate_response(self, prompt, context, require_citations=False):
+                assert require_citations is True
+                return "generated answer without citations"
+
+        app.dependency_overrides[get_llm_client] = lambda: FakeLLM()
+        response = client.post(
+            "/chat",
+            json={
+                "query": "test query",
+                "group_id": "safe-id",
+                "limit": 5,
+                "require_citations": True,
+            },
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["answer"] == "I don't have enough information in the provided documents."
+        assert body["grounding"]["status"] == "rejected_uncited"
+
+    def test_required_citations_accepts_valid_citations(self):
+        class FakeLLM:
+            def generate_response(self, prompt, context, require_citations=False):
+                assert require_citations is True
+                return "The answer is supported by the document [1]."
+
+        app.dependency_overrides[get_llm_client] = lambda: FakeLLM()
+        response = client.post(
+            "/chat",
+            json={
+                "query": "test query",
+                "group_id": "safe-id",
+                "limit": 5,
+                "require_citations": True,
+            },
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["answer"] == "The answer is supported by the document [1]."
+        assert body["grounding"]["status"] == "cited"
+        assert body["grounding"]["citations_found"] == [1]
+
+    def test_group_crud_endpoints(self):
+        assert client.get("/groups").json() == [
+            {"group_id": "safe-id", "chunks": 1, "files": 1, "created_at": None}
+        ]
+
+        group = client.get("/groups/safe-id")
+        assert group.status_code == 200
+        assert group.json()["group_id"] == "safe-id"
+
+        files = client.get("/groups/safe-id/files")
+        assert files.status_code == 200
+        assert files.json()[0]["file_id"] == "file-1"
+
+        deleted_file = client.delete("/groups/safe-id/files/file-1")
+        assert deleted_file.status_code == 200
+        assert deleted_file.json() == {"deleted_chunks": 1}
+
+        deleted_group = client.delete("/groups/safe-id")
+        assert deleted_group.status_code == 200
+        assert deleted_group.json() == {"deleted_chunks": 1}
+
+    def test_debug_search_returns_raw_results(self):
+        response = client.post(
+            "/debug/search",
+            json={"query": "test query", "group_id": "safe-id", "limit": 5},
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["results"][0]["chunk_id"] == "chunk-1"

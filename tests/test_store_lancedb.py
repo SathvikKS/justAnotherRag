@@ -23,6 +23,7 @@ class TestLanceDBStore:
             [
                 {
                     "chunk_id": "c1",
+                    "file_id": "f1",
                     "vector": [0.01] * 384,
                     "text": "Hello world",
                     "group_id": "group-a",
@@ -31,6 +32,7 @@ class TestLanceDBStore:
                 },
                 {
                     "chunk_id": "c2",
+                    "file_id": "f1",
                     "vector": [0.02] * 384,
                     "text": "Foo bar baz",
                     "group_id": "group-a",
@@ -39,6 +41,7 @@ class TestLanceDBStore:
                 },
                 {
                     "chunk_id": "c3",
+                    "file_id": "f2",
                     "vector": [0.99] * 384,
                     "text": "Other group content",
                     "group_id": "group-b",
@@ -72,6 +75,21 @@ class TestLanceDBStore:
             limit=1,
         )
         assert len(results_single) == 1
+
+        groups = store.list_groups()
+        assert {group["group_id"] for group in groups} == {"group-a", "group-b"}
+
+        files = store.list_files("group-a")
+        assert len(files) == 1
+        assert files[0]["file_id"] == "f1"
+        assert files[0]["chunks"] == 2
+
+        assert store.delete_file("group-a", "f1") == 2
+        assert store.list_files("group-a") == []
+        assert store.get_group("group-b")["chunks"] == 1
+
+        assert store.delete_group("group-b") == 1
+        assert store.list_groups() == []
 
     def test_search_with_bad_group_id_rejected(self, temp_db):
         from rag_storage import LanceDBStore
