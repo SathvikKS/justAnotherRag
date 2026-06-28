@@ -26,9 +26,10 @@ def test_process_document_task_runs_pipeline(monkeypatch):
             self.records = records
             return True
 
-    monkeypatch.setattr(tasks, "PyPDFParser", FakeParser)
+    monkeypatch.setattr(tasks, "get_document_parser", lambda: FakeParser())
     monkeypatch.setattr(tasks, "EmbeddingClient", lambda url: FakeEmbedder())
     monkeypatch.setattr(tasks, "LanceDBStore", FakeStore)
+    tasks._embedder = None
 
     result = tasks.process_document_task.run(b"%PDF", "doc.pdf", "group-a")
 
@@ -43,3 +44,27 @@ def test_process_document_task_runs_pipeline(monkeypatch):
     assert stores[0].records[0]["chunk_index"] == 0
     assert stores[0].records[0]["text_quality"] == "ok"
     assert stores[0].records[0]["vector"] == [5.0] * 384
+
+
+def test_warm_document_parser_only_runs_once(monkeypatch):
+    calls = []
+
+    class FakeParser:
+        def extract_text(self, file_bytes, filename):
+            calls.append((file_bytes, filename))
+            return [{"text": "warm", "metadata": {"filename": filename}}]
+
+    monkeypatch.setattr(tasks, "settings", type("S", (), {"docling_warmup_enabled": True})())
+    monkeypatch.setattr(tasks, "get_document_parser", lambda: FakeParser())
+    tasks._parser_warmed = False
+
+    assert tasks.warm_document_parser() is True
+    assert tasks.warm_document_parser() is False
+    assert calls == [(tasks.WARMUP_PDF_BYTES, "warmup.pdf")]
+
+
+def test_warm_document_parser_respects_disabled_setting(monkeypatch):
+    monkeypatch.setattr(tasks, "settings", type("S", (), {"docling_warmup_enabled": False})())
+    tasks._parser_warmed = False
+
+    assert tasks.warm_document_parser() is False

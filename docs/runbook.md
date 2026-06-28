@@ -24,6 +24,12 @@ LANCEDB_URI=../lancedb_data
 LANCEDB_TABLE=document_chunks
 EMBEDDING_MODEL=BAAI/bge-small-en-v1.5
 EMBEDDING_GRPC_URL=localhost:50051
+DOCLING_OCR_ENABLED=true
+DOCLING_OCR_ENGINE=auto
+DOCLING_OCR_LANGS=eng
+DOCLING_RAPIDOCR_BACKEND=onnxruntime
+DOCLING_FORCE_BACKEND_TEXT=true
+DOCLING_WARMUP_ENABLED=true
 LLM_PROVIDER=mock
 LLM_GRPC_URL=localhost:50052
 LLM_MODEL=Qwen/Qwen2.5-3B-Instruct
@@ -105,6 +111,10 @@ The gRPC server defaults to `Qwen/Qwen2.5-3B-Instruct`; override with `LLM_MODEL
 On Windows, use WSL2, Docker CPU mode, or the mock server for local LLM work.
 
 On Windows, use `--pool=solo` for Celery local development.
+
+The ingestion worker caches Docling once per worker process. With `--pool=solo`, Docling/OCR models load once. With process concurrency such as `--concurrency=4`, expect roughly four independent Docling/OCR model stacks in memory. If Docling later runs on GPU, that same pattern duplicates VRAM usage, so keep GPU-backed ingestion at one process per GPU unless capacity has been measured.
+
+With `DOCLING_WARMUP_ENABLED=true`, each worker process runs a small synthetic PDF through Docling during startup. This shifts tokenizer/OCR/model initialization cost from the first user upload to worker boot time.
 
 ## Docker
 
@@ -233,7 +243,10 @@ curl -X POST http://localhost:8000/debug/search -H "Content-Type: application/js
 Worker failure:
 
 - Malformed PDF.
-- Image-only PDF with no extractable text.
+- Image-only PDF with no extractable text because OCR is disabled, misconfigured, or the selected Docling OCR engine is unavailable.
+- RapidOCR selected without `onnxruntime`, which can make Docling fall back to an unsupported torch OCR configuration on this Windows setup.
+- High Celery process concurrency with Docling/OCR, which can multiply RAM use now and VRAM use later if Docling is moved to GPU.
+- Docling conversion failure or tokenizer/model download failure on first run.
 - Extracted text filtered as mojibake/low-signal text.
 - Embedding model download/cache failure.
 - LanceDB write failure.
@@ -243,10 +256,4 @@ Worker failure:
 
 ```powershell
 uv run pytest -q -p no:cacheprovider
-```
-
-Current expected result:
-
-```text
-30 passed
 ```

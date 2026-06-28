@@ -6,7 +6,7 @@ The Python side is a uv workspace with separate root services:
 
 - `api/`: FastAPI HTTP API.
 - `ingestion/`: Celery PDF ingestion worker.
-- `embedding/`: gRPC SentenceTransformers embedding service.
+- `embedding/`: gRPC embedding service.
 - `llm/`: vLLM gRPC launcher plus mock server.
 - `packages/`: shared config, LanceDB storage, and gRPC clients.
 - `rag-web/`: Vite React client.
@@ -15,7 +15,8 @@ The Python side is a uv workspace with separate root services:
 
 - Upload PDFs and assign them to a `group_id`.
 - Process uploads in `ingestion_worker`.
-- Parse PDFs with `pypdf` and split into 512-character chunks.
+- Parse PDFs with Docling's LangChain loader and tokenizer-aware chunking.
+- Support configurable OCR in ingestion through Docling when documents are scanned or image-heavy.
 - Embed queries and chunks through `embedding_service`.
 - Store chunks in LanceDB with 384-dimensional vectors.
 - Search LanceDB with hybrid vector plus text search, filtered by `group_id`.
@@ -36,6 +37,12 @@ LANCEDB_URI=../lancedb_data
 LANCEDB_TABLE=document_chunks
 EMBEDDING_MODEL=BAAI/bge-small-en-v1.5
 EMBEDDING_GRPC_URL=localhost:50051
+DOCLING_OCR_ENABLED=true
+DOCLING_OCR_ENGINE=auto
+DOCLING_OCR_LANGS=eng
+DOCLING_RAPIDOCR_BACKEND=onnxruntime
+DOCLING_FORCE_BACKEND_TEXT=true
+DOCLING_WARMUP_ENABLED=true
 LLM_PROVIDER=mock
 LLM_GRPC_URL=localhost:50052
 LLM_MODEL=Qwen/Qwen2.5-3B-Instruct
@@ -47,6 +54,12 @@ CELERY_RESULT_BACKEND=redis://localhost:6379/0
 For local filesystem LanceDB storage shared by API and ingestion, set `LANCEDB_URI=../lancedb_data` in both `api/.env` and `ingestion/.env`.
 
 If Redis requires a password, set the passworded `CELERY_BROKER_URL` and `CELERY_RESULT_BACKEND` in both `api/.env` and `ingestion/.env`.
+
+Docling OCR is configured only in `ingestion/.env`. `DOCLING_OCR_ENGINE=auto` is the default. On this Windows environment, `rapidocr` needs `onnxruntime` installed to avoid falling back to an unsupported torch OCR path.
+
+The ingestion worker caches its `DoclingParser` once per worker process. If you increase Celery process concurrency, each process loads its own Docling/OCR pipeline state. That is mostly a RAM cost on CPU, but it becomes a VRAM multiplier if ingestion later moves to GPU-backed Docling. Prefer one GPU-backed ingestion process per GPU rather than high Celery process concurrency.
+
+With `DOCLING_WARMUP_ENABLED=true`, the ingestion worker also runs a tiny synthetic PDF through Docling at worker startup so tokenizer/OCR/pipeline initialization happens before the first user upload.
 
 ## Local Dev
 
@@ -81,6 +94,8 @@ copy .env.example .env
 uv sync
 uv run celery -A rag_ingestion.tasks.celery_app worker --loglevel=info --pool=solo
 ```
+
+`--pool=solo` is the safest local Windows setting and keeps Docling/OCR model loading to one worker process. If you later run multi-process Celery concurrency, expect one Docling/OCR stack per process.
 
 Embedding:
 
@@ -218,6 +233,8 @@ curl -X POST http://localhost:8000/debug/search -H "Content-Type: application/js
 ```
 
 The web client also shows indexed files for the current group and exposes refresh/delete controls in the sidebar. The main query panel has two modes: `Ask AI` calls `/chat` and returns an LLM answer with sources, while `Search Vector DB` calls `/debug/search` and shows ranked retrieval hits without LLM generation. Query responses omit vectors and empty optional fields to keep payloads small. Query settings let users choose how many source chunks to retrieve (`5` by default) and whether to reject uncited AI answers. The prompt always asks for citations on document-backed answers; the toggle only controls whether uncited answers are accepted or rejected. Assistant messages include a grounding badge for every document-backed answer: `Cited`, `Uncited`, or `Uncited: rejected`. When citation enforcement is enabled, rejected responses expose the raw uncited model answer in an expandable debug panel.
+
+The embedding service still exposes the same gRPC API, but now uses LangChain's Hugging Face embeddings wrapper internally with the same `EMBEDDING_MODEL`.
 
 ## Test
 

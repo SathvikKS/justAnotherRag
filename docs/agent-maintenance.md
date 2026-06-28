@@ -72,7 +72,10 @@ If yes, update the matching docs in the same change.
 - Re-uploading the same filename creates a new `file_id`.
 - API and ingestion must not import SentenceTransformers, Torch, or vLLM.
 - Embedding model dependencies live in `embedding/`.
+- Docling OCR and parser state are loaded once per ingestion worker process, not shared across Celery processes.
+- If `DOCLING_WARMUP_ENABLED=true`, ingestion also performs a startup warmup conversion once per worker process.
 - vLLM dependencies live in `llm/`.
+- GPU-backed ingestion would multiply VRAM usage with Celery process concurrency, so document any concurrency or accelerator changes together.
 - Mock LLM mode requires `LLM_PROVIDER=mock` on the API process.
 - LanceDB vectors are fixed at 384 dimensions.
 - `group_id` must stay validated before LanceDB filtering.

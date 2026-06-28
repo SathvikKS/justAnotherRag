@@ -8,6 +8,12 @@ class Settings(BaseSettings):
     lancedb_table: str = "document_chunks"
     embedding_model: str = "BAAI/bge-small-en-v1.5"
     embedding_grpc_url: str = "localhost:50051"
+    docling_ocr_enabled: bool = True
+    docling_ocr_engine: str = "auto"
+    docling_ocr_langs: str = ""
+    docling_rapidocr_backend: str = "onnxruntime"
+    docling_force_backend_text: bool = True
+    docling_warmup_enabled: bool = True
     llm_provider: str = "vllm"
     llm_grpc_url: str = "localhost:50052"
     llm_model: str = "Qwen/Qwen2.5-3B-Instruct"
@@ -29,6 +35,14 @@ class Settings(BaseSettings):
             origin.strip()
             for origin in self.cors_origins.split(",")
             if origin.strip()
+        ]
+
+    @property
+    def docling_ocr_lang_list(self) -> list[str]:
+        return [
+            lang.strip()
+            for lang in self.docling_ocr_langs.split(",")
+            if lang.strip()
         ]
 
     @property

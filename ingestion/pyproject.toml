@@ -4,11 +4,13 @@ version = "0.1.0"
 requires-python = ">=3.11"
 dependencies = [
     "celery[redis]>=5.6.3",
-    "langchain-text-splitters",
-    "pypdf",
+    "docling",
+    "langchain-docling",
+    "onnxruntime",
     "rag-core",
     "rag-grpc",
     "rag-storage",
+    "transformers",
 ]
 
 [tool.uv.sources]
