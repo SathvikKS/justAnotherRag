@@ -154,6 +154,7 @@ def grounding_status(
     sources: list[Source],
     require_citations: bool,
     answer: str,
+    raw_answer: str | None = None,
 ) -> dict:
     if not sources:
         return {
@@ -164,23 +165,18 @@ def grounding_status(
             "status": "no_retrieval",
         }
 
-    if not require_citations:
-        return {
-            "mode": "document",
-            "sources_supplied": len(sources),
-            "citations_required": False,
-            "citations_found": [],
-            "status": "document_context_supplied",
-        }
-
     citations = valid_citations(answer, len(sources))
-    return {
+    status = "cited" if citations else "rejected_uncited" if require_citations else "uncited"
+    grounding = {
         "mode": "document",
         "sources_supplied": len(sources),
-        "citations_required": True,
+        "citations_required": require_citations,
         "citations_found": citations,
-        "status": "cited" if citations else "rejected_uncited",
+        "status": status,
     }
+    if raw_answer is not None:
+        grounding["raw_answer"] = raw_answer
+    return grounding
 
 
 @app.post("/upload")
@@ -303,14 +299,21 @@ def chat(
             f"{f' p.{source.page}' if source.page else ''}\n{source.text}"
             for source in sources
         ]
-        answer = llm.generate_response(
+        raw_answer = llm.generate_response(
             payload.query,
             context,
             require_citations=payload.require_citations,
         )
+        answer = raw_answer
         grounding = grounding_status(sources, payload.require_citations, answer)
         if payload.require_citations and grounding["status"] == "rejected_uncited":
             answer = "I don't have enough information in the provided documents."
+            grounding = grounding_status(
+                sources,
+                payload.require_citations,
+                answer,
+                raw_answer=raw_answer,
+            )
     except Exception as e:
         raise HTTPException(500, f"Chat query failed: {e}")
 

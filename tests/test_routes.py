@@ -216,7 +216,8 @@ class TestChat:
         assert isinstance(body["sources"], list)
         assert body["sources"][0]["file_id"] == "file-1"
         assert body["sources"][0]["score"] == 0.9
-        assert body["grounding"]["status"] == "document_context_supplied"
+        assert body["grounding"]["status"] == "uncited"
+        assert body["grounding"]["citations_required"] is False
 
     def test_greeting_bypasses_retrieval(self):
         response = client.post(
@@ -265,6 +266,7 @@ class TestChat:
         body = response.json()
         assert body["answer"] == "I don't have enough information in the provided documents."
         assert body["grounding"]["status"] == "rejected_uncited"
+        assert body["grounding"]["raw_answer"] == "generated answer without citations"
 
     def test_required_citations_accepts_valid_citations(self):
         class FakeLLM:

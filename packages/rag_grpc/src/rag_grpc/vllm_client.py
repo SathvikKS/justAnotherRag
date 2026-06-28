@@ -70,11 +70,17 @@ class VllmGrpcClient:
             "Answer:"
         )
         citation_instruction = (
-            " Every factual claim must include citations using the provided "
-            "source numbers like [1]. For topic or keyword requests, summarize "
-            "what the provided context says about that topic with citations. "
-            "If the context does not explicitly support an answer, respond "
-            "exactly: I don't have enough information in the provided documents."
+            " Cite document-backed claims using the provided source numbers "
+            "like [1]. For meaning, definition, topic, or keyword requests, "
+            "answer from what is directly stated or reasonably inferable from "
+            "the surrounding context, then cite the source. Do not use "
+            "background facts that are absent from the context."
+        )
+        strict_instruction = (
+            " If the context does not mention the requested topic or does not "
+            "provide enough surrounding information to answer with citations, "
+            "respond exactly: I don't have enough information in the provided "
+            "documents."
             if require_citations
             else ""
         )
@@ -85,11 +91,14 @@ class VllmGrpcClient:
                     "You are a document QA assistant. Use only the provided "
                     "context to answer the user's request. If the user provides "
                     "only a topic or keyword, summarize what the context says "
-                    "about that topic. If the context is irrelevant or "
-                    "insufficient, say you do not have enough information. Do "
+                    "about that topic. For definition-style questions, explain "
+                    "the term using the surrounding context instead of requiring "
+                    "a dictionary-style definition. If the context is irrelevant "
+                    "or insufficient, say you do not have enough information. Do "
                     "not translate, summarize unrelated content, or invent facts "
                     "unless the user asks."
                     f"{citation_instruction}"
+                    f"{strict_instruction}"
                 ),
             },
             {"role": "user", "content": user_content},

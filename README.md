@@ -58,6 +58,20 @@ uv sync
 uv run uvicorn rag_api.routes:app --reload
 ```
 
+When editing shared packages while running services directly from terminals, include the package directory in Uvicorn's reload watch list. Otherwise `--reload` may notice changes under `api/src` but miss edits under `../packages`, such as prompt changes in `rag_grpc`:
+
+```powershell
+uv run uvicorn rag_api.routes:app --reload --reload-dir src --reload-dir ../packages
+```
+
+If shared package changes still do not appear, confirm where Python imports the package from:
+
+```powershell
+uv run python -c "import rag_grpc, inspect; print(inspect.getfile(rag_grpc))"
+```
+
+If it points into `.venv\Lib\site-packages` instead of `packages\rag_grpc\src`, run `uv sync` and restart the API process.
+
 Ingestion:
 
 ```powershell
@@ -202,7 +216,7 @@ Inspect raw retrieval output:
 curl -X POST http://localhost:8000/debug/search -H "Content-Type: application/json" -d "{\"query\":\"What is this document about?\",\"group_id\":\"demo\",\"limit\":5}"
 ```
 
-The web client also shows indexed files for the current group and exposes refresh/delete controls in the sidebar. Chat settings let users choose how many source chunks to retrieve (`5` by default) and whether to require source citations. Assistant messages include a grounding badge: cited responses show valid source citations, uncited responses can be rejected when citation enforcement is enabled, and direct responses such as greetings show that no document sources were supplied.
+The web client also shows indexed files for the current group and exposes refresh/delete controls in the sidebar. Chat settings let users choose how many source chunks to retrieve (`5` by default) and whether to reject uncited answers. The prompt always asks for citations on document-backed answers; the toggle only controls whether uncited answers are accepted or rejected. Assistant messages include a grounding badge for every document-backed answer: `Cited`, `Uncited`, or `Uncited: rejected`. When citation enforcement is enabled, rejected responses expose the raw uncited model answer in an expandable debug panel.
 
 ## Test
 

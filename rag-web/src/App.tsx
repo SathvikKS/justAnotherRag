@@ -91,6 +91,7 @@ type Grounding = {
   citations_required: boolean
   citations_found: number[]
   status: string
+  raw_answer?: string
 }
 
 type ChatMessage = {
@@ -665,11 +666,15 @@ export function App() {
                     <div className="mb-2 flex flex-wrap items-center gap-2 text-xs">
                       {message.grounding?.status === "cited" ? (
                         <span className="rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2 py-1 font-medium text-emerald-700 dark:text-emerald-300">
-                          Grounded with citations: {message.grounding.citations_found.join(", ")}
+                          Cited: {message.grounding.citations_found.join(", ")}
                         </span>
                       ) : message.grounding?.status === "rejected_uncited" ? (
                         <span className="rounded-full border border-destructive/40 bg-destructive/10 px-2 py-1 font-medium text-destructive">
-                          Rejected: no valid citations
+                          Uncited: rejected
+                        </span>
+                      ) : message.grounding?.status === "uncited" ? (
+                        <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-1 font-medium text-amber-700 dark:text-amber-300">
+                          Uncited
                         </span>
                       ) : message.sources?.length ? (
                         <span className="rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2 py-1 font-medium text-emerald-700 dark:text-emerald-300">
@@ -686,7 +691,7 @@ export function App() {
                         </span>
                       ) : message.sources?.length ? (
                         <span className="text-muted-foreground">
-                          Citation checks were off; verify against evidence below.
+                          Citation checks were off; answer was not rejected.
                         </span>
                       ) : (
                         <span className="text-muted-foreground">
@@ -698,6 +703,16 @@ export function App() {
                   <p className="whitespace-pre-wrap break-words leading-6">
                     {message.content}
                   </p>
+                  {message.grounding?.raw_answer ? (
+                    <details className="mt-3 rounded-md border border-destructive/30 bg-destructive/5 p-2">
+                      <summary className="cursor-pointer text-xs font-medium text-destructive">
+                        Show rejected raw answer
+                      </summary>
+                      <p className="mt-2 whitespace-pre-wrap break-words text-xs text-muted-foreground">
+                        {message.grounding.raw_answer}
+                      </p>
+                    </details>
+                  ) : null}
                   {message.sources?.length ? (
                     <details className="mt-3 rounded-md border bg-muted/30 p-2">
                       <summary className="cursor-pointer text-xs font-medium text-muted-foreground">

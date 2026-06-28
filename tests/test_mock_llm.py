@@ -44,6 +44,8 @@ def test_vllm_client_uses_tokenizer_chat_template():
             assert tokenize is False
             assert add_generation_prompt is True
             assert messages[0]["role"] == "system"
+            assert "source numbers like [1]" in messages[0]["content"]
+            assert "respond exactly" not in messages[0]["content"]
             assert messages[1]["role"] == "user"
             assert "Context:" in messages[1]["content"]
             assert "User request:" in messages[1]["content"]
@@ -53,3 +55,28 @@ def test_vllm_client_uses_tokenizer_chat_template():
     client._tokenizer = FakeTokenizer()
 
     assert client._render_prompt("What?", ["doc.pdf p.1\nContext"]) == "rendered prompt"
+
+
+def test_vllm_client_citation_prompt_allows_contextual_definitions():
+    class FakeTokenizer:
+        chat_template = "template"
+
+        def apply_chat_template(self, messages, tokenize, add_generation_prompt):
+            system = messages[0]["content"]
+            assert "definition-style questions" in system
+            assert "reasonably inferable" in system
+            assert "source numbers like [1]" in system
+            assert "respond exactly" in system
+            return "rendered prompt"
+
+    client = VllmGrpcClient.__new__(VllmGrpcClient)
+    client._tokenizer = FakeTokenizer()
+
+    assert (
+        client._render_prompt(
+            "what does somatosensory mean?",
+            ["somatosensory.pdf p.1\nOur somatosensory system consists of sensors"],
+            require_citations=True,
+        )
+        == "rendered prompt"
+    )

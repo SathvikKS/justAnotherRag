@@ -172,7 +172,7 @@ Response has `answer` and `sources`.
 
 Greeting and assistant small-talk queries such as `hi`, `who are you`, and `where are you` bypass retrieval and return no sources.
 
-The web chat shows a grounding badge on assistant messages. Chat settings let users choose the retrieval limit (`5` by default) and toggle citation enforcement per request. When citation enforcement is off, the badge only confirms that source chunks were supplied. When citation enforcement is on, uncited document answers are replaced with `I don't have enough information in the provided documents.` `No document sources supplied` means the answer did not use retrieved chunks.
+The web chat shows a grounding badge on assistant messages. Chat settings let users choose the retrieval limit (`5` by default) and toggle citation enforcement per request. The prompt always asks for `[n]` citations on document-backed answers; enforcement only decides whether uncited answers are accepted or rejected. Document-backed answers are labelled `Cited` or `Uncited` based on whether valid citations were found. When citation enforcement is on, uncited document answers are replaced with `I don't have enough information in the provided documents.` and the raw rejected answer is available in an expandable debug panel. `No document sources supplied` means the answer did not use retrieved chunks.
 
 List indexed groups:
 
