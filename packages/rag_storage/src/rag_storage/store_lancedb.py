@@ -1,10 +1,9 @@
 import re
 from collections import defaultdict
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import lancedb
 from lancedb.pydantic import LanceModel, Vector
-
 from rag_core.config import get_settings
 from rag_core.interfaces import VectorStoreBase
 
@@ -36,7 +35,11 @@ class LanceDBStore(VectorStoreBase):
         table_name = table_name or settings.lancedb_table
         if storage_options is None and str(uri).startswith("s3://"):
             storage_options = settings.lancedb_storage_options
-        self.db = lancedb.connect(uri, storage_options=storage_options)
+        self.db = lancedb.connect(
+            uri,
+            storage_options=storage_options,
+            read_consistency_interval=timedelta(seconds=0),
+        )
         self.table_name = table_name
         self.table = self._get_or_create_table()
         self._ensure_metadata_columns()
@@ -122,9 +125,7 @@ class LanceDBStore(VectorStoreBase):
         self._ensure_fts_index()
 
         query = (
-            self.table.search(query_type="hybrid")
-            .vector(query_vector)
-            .text(query_text)
+            self.table.search(query_type="hybrid").vector(query_vector).text(query_text)
         )
 
         if group_id:
@@ -152,9 +153,13 @@ class LanceDBStore(VectorStoreBase):
                 },
             )
             group["chunks"] += 1
-            group["files"].add(row.get("file_id") or f"legacy:{row.get('filename', '')}")
+            group["files"].add(
+                row.get("file_id") or f"legacy:{row.get('filename', '')}"
+            )
             created_at = row.get("created_at")
-            if created_at and (not group["created_at"] or created_at < group["created_at"]):
+            if created_at and (
+                not group["created_at"] or created_at < group["created_at"]
+            ):
                 group["created_at"] = created_at
 
         return [
@@ -199,13 +204,17 @@ class LanceDBStore(VectorStoreBase):
             if page is not None:
                 pages_by_file[file_id].add(int(page))
             created_at = row.get("created_at")
-            if created_at and (not item["created_at"] or created_at < item["created_at"]):
+            if created_at and (
+                not item["created_at"] or created_at < item["created_at"]
+            ):
                 item["created_at"] = created_at
 
         for file_id, item in files.items():
             item["pages"] = sorted(pages_by_file[file_id])
 
-        return sorted(files.values(), key=lambda item: (item["filename"], item["file_id"]))
+        return sorted(
+            files.values(), key=lambda item: (item["filename"], item["file_id"])
+        )
 
     def delete_group(self, group_id: str) -> int:
         self._validate_group_id(group_id)

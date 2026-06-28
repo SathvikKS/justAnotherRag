@@ -103,3 +103,31 @@ class TestLanceDBStore:
                 group_id="bad'id",
                 limit=5,
             )
+
+    def test_fresh_store_sees_data_written_by_another_store(self, temp_db):
+        """Two stores sharing the same table: writes in one must be visible in the other."""
+        from rag_storage import LanceDBStore
+
+        record = {
+            "chunk_id": "c1",
+            "file_id": "f1",
+            "vector": [0.01] * 384,
+            "text": "New content",
+            "group_id": "demo",
+            "filename": "newdoc.pdf",
+            "page": 1,
+        }
+
+        # Simulate the API singleton — opened first, pinned to version 1
+        api_store = LanceDBStore(uri=temp_db, table_name="test_stale")
+
+        assert api_store.list_groups() == []
+
+        # Simulate the worker — fresh store, writes and creates version 2
+        worker_store = LanceDBStore(uri=temp_db, table_name="test_stale")
+        worker_store.upsert([record])
+
+        assert len(worker_store.list_groups()) == 1  # worker sees it
+
+        # THIS IS THE BUG: api_store should see it but doesn't
+        assert len(api_store.list_groups()) == 1
