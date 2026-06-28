@@ -34,7 +34,7 @@ Chat:
 4. API searches LanceDB through `LanceDBStore`.
 5. API sends the query and labelled retrieved source text to `llm_service`.
 6. `VllmGrpcClient` wraps the request in a document-QA system/user message and renders it with the tokenizer chat template when available.
-7. The prompt always asks for source-number citations on document-backed answers, and the API always records whether valid citations were found. If `require_citations` is true for the request, the API rejects uncited document answers with an insufficient-context response while preserving the raw uncited answer in `grounding.raw_answer` for debugging. When false, uncited answers are labelled but not rejected.
+7. The `VllmGrpcClient` uses vLLM's guided decoding (`json_schema`) to force the LLM to output a structured JSON response containing the user-facing `answer`, a `citations` array, and an `insufficient` boolean. The API uses this structured metadata to record whether valid citations were found or if the context was insufficient. If `require_citations` is true for the request, the API rejects uncited or insufficient document answers with an insufficient-context response while preserving the raw uncited answer in `grounding.raw_answer` for debugging. When false, uncited answers are labelled but not rejected.
 8. API returns `query`, `group_id`, `answer`, `sources`, and `grounding` metadata.
 
 Management:

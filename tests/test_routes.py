@@ -62,7 +62,11 @@ def fake_chat_dependencies():
             assert prompt == "test query"
             assert context == ["doc.pdf p.1\nmatched text"]
             assert require_citations is False
-            return "generated answer"
+            return {
+                "answer": "generated answer",
+                "citations": [],
+                "insufficient": False,
+            }
 
     app.dependency_overrides[get_embedding_engine] = lambda: FakeEmbedder()
     app.dependency_overrides[get_vector_store] = lambda: FakeStore()
@@ -250,7 +254,11 @@ class TestChat:
         class FakeLLM:
             def generate_response(self, prompt, context, require_citations=False):
                 assert require_citations is True
-                return "generated answer without citations"
+                return {
+                    "answer": "generated answer without citations",
+                    "citations": [],
+                    "insufficient": False,
+                }
 
         app.dependency_overrides[get_llm_client] = lambda: FakeLLM()
         response = client.post(
@@ -272,7 +280,11 @@ class TestChat:
         class FakeLLM:
             def generate_response(self, prompt, context, require_citations=False):
                 assert require_citations is True
-                return "The answer is supported by the document [1]."
+                return {
+                    "answer": "The answer is supported by the document.",
+                    "citations": [1],
+                    "insufficient": False,
+                }
 
         app.dependency_overrides[get_llm_client] = lambda: FakeLLM()
         response = client.post(
@@ -286,7 +298,7 @@ class TestChat:
         )
         assert response.status_code == 200
         body = response.json()
-        assert body["answer"] == "The answer is supported by the document [1]."
+        assert body["answer"] == "The answer is supported by the document."
         assert body["grounding"]["status"] == "cited"
         assert body["grounding"]["citations_found"] == [1]
 

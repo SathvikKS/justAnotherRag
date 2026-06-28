@@ -33,7 +33,11 @@ def test_mock_llm_client_calls_mock_server():
     finally:
         server.stop(0)
 
-    assert answer == "Mock answer for: question?"
+    assert answer == {
+        "answer": "Mock answer for: question?",
+        "citations": [],
+        "insufficient": False,
+    }
 
 
 def test_vllm_client_uses_tokenizer_chat_template():
@@ -44,8 +48,7 @@ def test_vllm_client_uses_tokenizer_chat_template():
             assert tokenize is False
             assert add_generation_prompt is True
             assert messages[0]["role"] == "system"
-            assert "source numbers like [1]" in messages[0]["content"]
-            assert "respond exactly" not in messages[0]["content"]
+            assert "without inline citation markers." in messages[0]["content"]
             assert messages[1]["role"] == "user"
             assert "Context:" in messages[1]["content"]
             assert "User request:" in messages[1]["content"]
@@ -65,8 +68,9 @@ def test_vllm_client_citation_prompt_allows_contextual_definitions():
             system = messages[0]["content"]
             assert "definition-style questions" in system
             assert "reasonably inferable" in system
-            assert "source numbers like [1]" in system
-            assert "respond exactly" in system
+            assert "without inline citation markers." in system
+            assert "set insufficient to true." in system
+            assert "respond exactly" not in system
             return "rendered prompt"
 
     client = VllmGrpcClient.__new__(VllmGrpcClient)

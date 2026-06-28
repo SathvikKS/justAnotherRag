@@ -145,15 +145,11 @@ def source_from_result(item: dict) -> Source:
     )
 
 
-def valid_citations(answer: str, source_count: int) -> list[int]:
-    citations = sorted({int(match) for match in re.findall(r"\[(\d+)\]", answer)})
-    return [citation for citation in citations if 1 <= citation <= source_count]
-
-
 def grounding_status(
     sources: list[Source],
     require_citations: bool,
-    answer: str,
+    citations: list[int],
+    insufficient: bool,
     raw_answer: str | None = None,
 ) -> dict:
     if not sources:
@@ -165,13 +161,24 @@ def grounding_status(
             "status": "no_retrieval",
         }
 
-    citations = valid_citations(answer, len(sources))
-    status = "cited" if citations else "rejected_uncited" if require_citations else "uncited"
+    valid_cites = sorted({
+        int(c) for c in citations if 1 <= int(c) <= len(sources)
+    })
+
+    if insufficient:
+        status = "insufficient"
+    elif require_citations and not valid_cites:
+        status = "rejected_uncited"
+    elif valid_cites:
+        status = "cited"
+    else:
+        status = "uncited"
+
     grounding = {
         "mode": "document",
         "sources_supplied": len(sources),
         "citations_required": require_citations,
-        "citations_found": citations,
+        "citations_found": valid_cites,
         "status": status,
     }
     if raw_answer is not None:
@@ -283,7 +290,7 @@ def chat(
                 group_id=payload.group_id,
                 answer=direct_answer,
                 sources=[],
-                grounding=grounding_status([], payload.require_citations, direct_answer),
+                grounding=grounding_status([], payload.require_citations, [], False),
             )
 
         query_vector = embedder.embed_text(payload.query)
@@ -299,20 +306,36 @@ def chat(
             f"{f' p.{source.page}' if source.page else ''}\n{source.text}"
             for source in sources
         ]
-        raw_answer = llm.generate_response(
+        llm_result = llm.generate_response(
             payload.query,
             context,
             require_citations=payload.require_citations,
         )
-        answer = raw_answer
-        grounding = grounding_status(sources, payload.require_citations, answer)
-        if payload.require_citations and grounding["status"] == "rejected_uncited":
+        answer = llm_result["answer"]
+        citations = llm_result["citations"]
+        insufficient = llm_result["insufficient"]
+
+        # Filter valid citations
+        valid_cites = sorted({
+            int(c) for c in citations if 1 <= int(c) <= len(sources)
+        })
+
+        if payload.require_citations and (insufficient or not valid_cites):
+            raw_answer = answer
             answer = "I don't have enough information in the provided documents."
             grounding = grounding_status(
                 sources,
                 payload.require_citations,
-                answer,
+                citations,
+                insufficient,
                 raw_answer=raw_answer,
+            )
+        else:
+            grounding = grounding_status(
+                sources,
+                payload.require_citations,
+                citations,
+                insufficient,
             )
     except Exception as e:
         raise HTTPException(500, f"Chat query failed: {e}")

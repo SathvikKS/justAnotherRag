@@ -10,7 +10,12 @@ def serve_mock_llm(port: int) -> grpc.Server:
     def generate(request: bytes, context: grpc.ServicerContext) -> bytes:
         body = json.loads(request.decode("utf-8"))
         answer = f"Mock answer for: {body.get('prompt', '')}"
-        return json.dumps({"text": answer}).encode("utf-8")
+        response_dict = {
+            "answer": answer,
+            "citations": [],
+            "insufficient": False,
+        }
+        return json.dumps({"text": json.dumps(response_dict)}).encode("utf-8")
 
     handler = grpc.unary_unary_rpc_method_handler(
         generate,
