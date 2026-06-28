@@ -29,6 +29,10 @@ class VectorStoreBase(ABC):
         ...
 
     @abstractmethod
+    def get_chunk(self, chunk_id: str) -> dict | None:
+        ...
+
+    @abstractmethod
     def list_groups(self) -> list[dict]:
         ...
 

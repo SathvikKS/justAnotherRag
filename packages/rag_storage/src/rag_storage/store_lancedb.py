@@ -137,6 +137,10 @@ class LanceDBStore(VectorStoreBase):
             item["score"] = self._score(item)
         return results
 
+    def get_chunk(self, chunk_id: str) -> dict | None:
+        rows = self._rows(f"chunk_id = '{self._quote(chunk_id)}'")
+        return rows[0] if rows else None
+
     def list_groups(self) -> list[dict]:
         groups: dict[str, dict] = {}
         for row in self._rows():

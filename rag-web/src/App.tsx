@@ -50,14 +50,32 @@ type TaskStatus = {
   error?: string
 }
 
-type Source = {
+type Snippet = {
   text: string
+  match_positions: number[][]
+  full_length: number
+}
+
+type Source = {
+  snippet: Snippet | null
   chunk_id?: string
   file_id?: string
   filename?: string
   page?: number
   group_id?: string
   score?: number
+}
+
+type ChunkDetail = {
+  chunk_id: string
+  text: string
+  filename?: string | null
+  page?: number | null
+  file_id?: string | null
+  group_id?: string | null
+  score?: number | null
+  text_quality?: string | null
+  match_positions?: number[][] | null
 }
 
 type GroupSummary = {
@@ -137,9 +155,24 @@ function formatScore(score: number | undefined) {
   return typeof score === "number" ? score.toFixed(3) : "unknown"
 }
 
-function previewText(text: string) {
-  const normalized = text.replace(/\s+/g, " ").trim()
-  return normalized.length > 220 ? `${normalized.slice(0, 220)}...` : normalized
+function highlightMatches(text: string, positions: number[][]): React.ReactNode {
+  if (!positions.length) return text
+  const sorted = [...positions].sort((a, b) => a[0] - b[0])
+  const parts: React.ReactNode[] = []
+  let cursor = 0
+  for (let i = 0; i < sorted.length; i++) {
+    const [start, end] = sorted[i]
+    if (start < cursor) continue
+    if (start > cursor) {
+      parts.push(text.slice(cursor, start))
+    }
+    parts.push(<mark key={i} className="rounded-sm bg-amber-500/25 px-0.5 text-foreground">{text.slice(start, end)}</mark>)
+    cursor = end
+  }
+  if (cursor < text.length) {
+    parts.push(text.slice(cursor))
+  }
+  return <>{parts}</>
 }
 
 export function App() {
@@ -158,6 +191,9 @@ export function App() {
   const [searchQuery, setSearchQuery] = React.useState("")
   const [chatError, setChatError] = React.useState<string | null>(null)
   const [isChatting, setIsChatting] = React.useState(false)
+  const [lastQuery, setLastQuery] = React.useState("")
+  const [expandedChunks, setExpandedChunks] = React.useState<Map<string, ChunkDetail>>(new Map())
+  const [loadingChunks, setLoadingChunks] = React.useState<Set<string>>(new Set())
   const [groupSummary, setGroupSummary] = React.useState<GroupSummary | null>(null)
   const [indexedFiles, setIndexedFiles] = React.useState<FileSummary[]>([])
   const [managementError, setManagementError] = React.useState<string | null>(null)
@@ -319,6 +355,42 @@ export function App() {
     }
   }
 
+  async function loadFullChunk(chunkId: string) {
+    if (expandedChunks.has(chunkId) || loadingChunks.has(chunkId)) return
+    setLoadingChunks((prev) => new Set(prev).add(chunkId))
+    try {
+      const params = new URLSearchParams()
+      if (lastQuery) params.set("q", lastQuery)
+      const url = `${API_BASE_URL}/chunks/${encodeURIComponent(chunkId)}${params.toString() ? "?" + params.toString() : ""}`
+      const response = await fetch(url)
+      if (!response.ok) {
+        throw new Error(await readError(response))
+      }
+      const detail = (await response.json()) as ChunkDetail
+      setExpandedChunks((prev) => {
+        const next = new Map(prev)
+        next.set(chunkId, detail)
+        return next
+      })
+    } catch (error) {
+      console.error("Failed to load chunk:", error)
+    } finally {
+      setLoadingChunks((prev) => {
+        const next = new Set(prev)
+        next.delete(chunkId)
+        return next
+      })
+    }
+  }
+
+  function collapseChunk(chunkId: string) {
+    setExpandedChunks((prev) => {
+      const next = new Map(prev)
+      next.delete(chunkId)
+      return next
+    })
+  }
+
   async function handleDeleteFile(fileSummary: FileSummary) {
     setDeleteTarget({ kind: "file", fileSummary })
   }
@@ -402,6 +474,7 @@ export function App() {
     setQuery("")
     setChatError(null)
     setIsChatting(true)
+    setLastQuery(cleanQuery)
 
     try {
       if (queryMode === "search") {
@@ -730,7 +803,14 @@ export function App() {
                     </p>
                     <span className="text-muted-foreground">No LLM generation used</span>
                   </div>
-                  {searchResults.map((result, index) => (
+                  {searchResults.map((result, index) => {
+                    const snippet = result.snippet
+                    const chunkId = result.chunk_id
+                    const isExpanded = chunkId ? expandedChunks.has(chunkId) : false
+                    const isLoading = chunkId ? loadingChunks.has(chunkId) : false
+                    const full = chunkId ? expandedChunks.get(chunkId) : undefined
+
+                    return (
                     <article
                       key={`${result.chunk_id ?? result.file_id ?? "result"}-${index}`}
                       className="rounded-md border bg-background p-3 text-sm"
@@ -749,11 +829,51 @@ export function App() {
                           </span>
                         ) : null}
                       </div>
-                      <p className="whitespace-pre-wrap break-words leading-6 text-muted-foreground">
-                        {previewText(result.text)}
-                      </p>
+                      {snippet ? (
+                        <div>
+                          <p className="whitespace-pre-wrap break-words leading-6 text-muted-foreground">
+                            {highlightMatches(snippet.text, snippet.match_positions)}
+                            {snippet.full_length > snippet.text.length ? "..." : null}
+                          </p>
+                          <div className="mt-2 flex items-center gap-2">
+                            {chunkId ? (
+                              isExpanded ? (
+                                <button
+                                  type="button"
+                                  className="rounded-sm bg-muted px-2 py-0.5 text-xs text-muted-foreground hover:text-foreground transition"
+                                  onClick={() => collapseChunk(chunkId)}
+                                >
+                                  Hide full chunk
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  className="rounded-sm bg-muted px-2 py-0.5 text-xs text-muted-foreground hover:text-foreground transition"
+                                  disabled={isLoading}
+                                  onClick={() => void loadFullChunk(chunkId)}
+                                >
+                                  {isLoading ? "Loading..." : "Show full chunk"}
+                                </button>
+                              )
+                            ) : null}
+                          </div>
+                          {isExpanded && full ? (
+                            <div className="mt-2 rounded-md border bg-muted/30 p-2 text-xs leading-6 whitespace-pre-wrap break-words">
+                              {highlightMatches(full.text, full.match_positions ?? [])}
+                              {full.text_quality ? (
+                                <p className="mt-2 text-muted-foreground">
+                                  quality: {full.text_quality}
+                                </p>
+                              ) : null}
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : (
+                        <p className="text-muted-foreground text-xs italic">No snippet available</p>
+                      )}
                     </article>
-                  ))}
+                    )
+                  })}
                 </div>
               )
             ) : messages.length === 0 ? (
@@ -827,7 +947,14 @@ export function App() {
                         Show document evidence
                       </summary>
                       <div className="mt-2 flex flex-col gap-2">
-                      {message.sources.map((result, index) => (
+                      {message.sources.map((result, index) => {
+                        const snippet = result.snippet
+                        const chunkId = result.chunk_id
+                        const isExpanded = chunkId ? expandedChunks.has(chunkId) : false
+                        const isLoading = chunkId ? loadingChunks.has(chunkId) : false
+                        const full = chunkId ? expandedChunks.get(chunkId) : undefined
+
+                        return (
                         <div
                           key={`${message.id}-${index}`}
                           className="rounded-md border bg-background p-2 text-xs"
@@ -841,11 +968,46 @@ export function App() {
                               score {formatScore(result.score)}
                             </span>
                           </div>
-                          <p className="break-words text-muted-foreground">
-                            {previewText(result.text)}
-                          </p>
+                          {snippet ? (
+                            <div>
+                              <p className="break-words text-muted-foreground">
+                                {highlightMatches(snippet.text, snippet.match_positions)}
+                                {snippet.full_length > snippet.text.length ? "..." : null}
+                              </p>
+                              <div className="mt-1 flex items-center gap-2">
+                                {chunkId ? (
+                                  isExpanded ? (
+                                    <button
+                                      type="button"
+                                      className="rounded-sm bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground hover:text-foreground transition"
+                                      onClick={() => collapseChunk(chunkId)}
+                                    >
+                                      Hide full chunk
+                                    </button>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      className="rounded-sm bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground hover:text-foreground transition"
+                                      disabled={isLoading}
+                                      onClick={() => void loadFullChunk(chunkId)}
+                                    >
+                                      Show full chunk
+                                    </button>
+                                  )
+                                ) : null}
+                              </div>
+                              {isExpanded && full ? (
+                                <div className="mt-1.5 rounded-sm border bg-muted/30 p-1.5 text-[11px] leading-5 whitespace-pre-wrap break-words">
+                                  {highlightMatches(full.text, full.match_positions ?? [])}
+                                </div>
+                              ) : null}
+                            </div>
+                          ) : (
+                            <p className="text-muted-foreground italic">No snippet available</p>
+                          )}
                         </div>
-                      ))}
+                        )
+                      })}
                       </div>
                     </details>
                   ) : null}
