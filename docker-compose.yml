@@ -3,7 +3,7 @@ services:
     build:
       context: .
       dockerfile: api/Dockerfile
-    command: uvicorn rag_api.routes:app --host 0.0.0.0 --port 8000
+    command: uvicorn rag_api.app:app --host 0.0.0.0 --port 8000
     env_file:
       - ./api/.env
     environment:

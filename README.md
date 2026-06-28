@@ -78,13 +78,13 @@ API:
 cd api
 copy .env.example .env
 uv sync
-uv run uvicorn rag_api.routes:app --reload
+uv run uvicorn rag_api.app:app --reload
 ```
 
 When editing shared packages while running services directly from terminals, include the package directory in Uvicorn's reload watch list. Otherwise `--reload` may notice changes under `api/src` but miss edits under `../packages`, such as prompt changes in `rag_grpc`:
 
 ```powershell
-uv run uvicorn rag_api.routes:app --reload --reload-dir src --reload-dir ../packages
+uv run uvicorn rag_api.app:app --reload --reload-dir src --reload-dir ../packages
 ```
 
 If shared package changes still do not appear, confirm where Python imports the package from:
@@ -177,6 +177,7 @@ docker compose -f docker-compose.yml -f docker-compose.cpu.yml up --build
 Services:
 
 - API: `http://localhost:8000`
+- MCP: `http://localhost:8000/mcp`
 - Web client: `http://localhost:3000`
 - Redis: `localhost:6379`
 - vLLM gRPC: `localhost:50052`
@@ -240,6 +241,14 @@ Inspect direct retrieval output:
 ```powershell
 curl -X POST http://localhost:8000/debug/search -H "Content-Type: application/json" -d "{\"query\":\"What is this document about?\",\"group_id\":\"demo\",\"limit\":5}"
 ```
+
+MCP tools for third-party agents:
+
+```powershell
+claude mcp add --transport http local-rag http://localhost:8000/mcp
+```
+
+The mounted MCP server exposes retrieval and ingestion tools only: `search_knowledge_base`, `list_groups`, `list_files`, `get_chunk`, `upload_document`, and `check_upload_status`. It shares the API's dependency providers directly and does not call back into REST routes.
 
 The web client also shows indexed files for the current group and exposes refresh/delete controls in the sidebar. The main query panel has two modes: `Ask AI` calls `/chat` and returns an LLM answer with sources, while `Search Vector DB` calls `/debug/search` and shows ranked retrieval hits without LLM generation. Query responses omit vectors and empty optional fields to keep payloads small. Query settings let users choose how many source chunks to retrieve (`5` by default) and whether to reject uncited AI answers. The prompt always asks for citations on document-backed answers; the toggle only controls whether uncited answers are accepted or rejected. Assistant messages include a grounding badge for every document-backed answer: `Cited`, `Uncited`, or `Uncited: rejected`. When citation enforcement is enabled, rejected responses expose the raw uncited model answer in an expandable debug panel.
 

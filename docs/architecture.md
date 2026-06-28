@@ -4,7 +4,7 @@ This is the current implemented architecture.
 
 ## Workspace
 
-- `api/src/rag_api`: FastAPI routes and HTTP dependency providers.
+- `api/src/rag_api`: FastAPI routes, MCP tools, and HTTP dependency providers.
 - `ingestion/src/rag_ingestion`: Celery app, PDF parsing, ingestion task.
 - `embedding/src/rag_embedding`: LangChain-backed embedding engine and gRPC server.
 - `llm/src/rag_llm`: vLLM gRPC launcher and mock server.
@@ -39,6 +39,14 @@ Chat:
 7. The `VllmGrpcClient` uses vLLM's guided decoding (`json_schema`) to force the LLM to output a structured JSON response containing the user-facing `answer`, a `citations` array, and an `insufficient` boolean. The API uses this structured metadata to record whether valid citations were found or if the context was insufficient. If `require_citations` is true for the request, the API rejects uncited or insufficient document answers with an insufficient-context response while preserving the raw uncited answer in `grounding.raw_answer` for debugging. When false, uncited answers are labelled but not rejected.
 8. API returns `query`, `group_id`, `answer`, `sources`, and `grounding` metadata.
 
+MCP:
+
+1. Third-party agents connect to `POST /mcp` using Streamable HTTP.
+2. `rag_api.mcp_server` exposes retrieval and ingestion tools backed by the same `dependencies.py` providers as REST.
+3. `search_knowledge_base`, `list_groups`, `list_files`, and `get_chunk` talk directly to the embedder and LanceDB store.
+4. `upload_document` enqueues the same Celery ingestion task as `POST /upload`.
+5. `check_upload_status` reads the same Celery result state as `GET /status/{task_id}`.
+
 Management:
 
 1. `GET /groups` lists indexed groups from LanceDB chunk metadata.
@@ -50,6 +58,7 @@ Management:
 ## Boundaries
 
 - API does not import SentenceTransformers, Torch, or vLLM.
+- MCP tools live in `mcp_server.py`, share `dependencies.py` and shared ingestion helpers, and never call REST route handlers.
 - Ingestion keeps parsing behind `DocumentParserBase` and currently uses Docling via LangChain.
 - Embedding service owns the LangChain embedding wrapper and the 384-dimension guard.
 - LLM service owns vLLM.

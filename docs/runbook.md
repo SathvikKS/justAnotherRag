@@ -54,7 +54,7 @@ API:
 cd api
 copy .env.example .env
 uv sync
-uv run uvicorn rag_api.routes:app --reload
+uv run uvicorn rag_api.app:app --reload
 ```
 
 Ingestion worker:
@@ -194,6 +194,23 @@ curl -X POST http://localhost:8000/chat -H "Content-Type: application/json" -d "
 ```
 
 Response has `answer` and `sources`.
+
+MCP endpoint:
+
+```powershell
+claude mcp add --transport http local-rag http://localhost:8000/mcp
+```
+
+Mounted MCP tools:
+
+- `search_knowledge_base`
+- `list_groups`
+- `list_files`
+- `get_chunk`
+- `upload_document`
+- `check_upload_status`
+
+`upload_document` expects a server-local PDF path and returns a Celery `task_id`. Use `check_upload_status` to poll ingestion state.
 
 Greeting and assistant small-talk queries such as `hi`, `who are you`, and `where are you` bypass retrieval and return no sources.
 

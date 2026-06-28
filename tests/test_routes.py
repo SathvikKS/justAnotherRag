@@ -2,7 +2,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from rag_api.dependencies import get_embedding_engine, get_llm_client, get_vector_store
-from rag_api.routes import app
+from rag_api.app import app
 
 client = TestClient(app)
 
@@ -124,7 +124,7 @@ class TestUpload:
                 calls["args"] = tuple(args)
                 return type("Result", (), {"id": "task-123"})()
 
-        monkeypatch.setattr("rag_api.routes.celery_app", FakeCelery())
+        monkeypatch.setattr("rag_api.ingestion.celery_app", FakeCelery())
 
         response = client.post(
             "/upload",
@@ -153,7 +153,7 @@ class TestUpload:
                 assert task_id == "task-123"
                 return FakeResult()
 
-        monkeypatch.setattr("rag_api.routes.celery_app", FakeCelery())
+        monkeypatch.setattr("rag_api.ingestion.celery_app", FakeCelery())
 
         response = client.get("/status/task-123")
 

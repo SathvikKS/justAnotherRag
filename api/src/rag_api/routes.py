@@ -1,39 +1,17 @@
 import re
-from pathlib import Path
 
-from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, UploadFile
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field, field_validator
-from celery import Celery
 
 from rag_api.dependencies import (
     get_embedding_engine,
     get_llm_client,
     get_vector_store,
 )
-from rag_core.config import get_settings
+from rag_api.ingestion import get_task_status, enqueue_upload, GROUP_ID_REGEX
 from rag_core.interfaces import EmbeddingEngineBase, LLMClientBase, VectorStoreBase
 
-load_dotenv(Path(__file__).resolve().parents[2] / ".env", encoding="utf-8-sig")
-settings = get_settings()
-
-app = FastAPI(title="Local RAG API")
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.cors_origin_list,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-GROUP_ID_REGEX = re.compile(r"^[A-Za-z0-9_.-]+$")
-INGESTION_TASK = "rag_ingestion.tasks.process_document_task"
-celery_app = Celery(
-    "rag_api",
-    broker=settings.celery_broker_url,
-    backend=settings.celery_result_backend,
-)
+router = APIRouter()
 
 
 class ChatRequest(BaseModel):
@@ -361,55 +339,34 @@ def grounding_status(
     return grounding
 
 
-@app.post("/upload")
+@router.post("/upload")
 async def upload(
     file: UploadFile = File(...),
     group_id: str = Form(...),
 ):
-    if not file.filename or not file.filename.lower().endswith(".pdf"):
-        raise HTTPException(400, "Only PDF files are supported")
-
-    if not group_id.strip():
-        raise HTTPException(400, "group_id is required")
-
-    if not GROUP_ID_REGEX.match(group_id):
-        raise HTTPException(
-            400,
-            "group_id must contain only letters, digits, underscores, dots, and hyphens",
-        )
-
     file_bytes = await file.read()
 
     try:
-        task = celery_app.send_task(
-            INGESTION_TASK,
-            args=[file_bytes, file.filename or "uploaded.pdf", group_id],
-        )
-    except Exception as e:
-        raise HTTPException(500, f"Failed to enqueue ingestion task: {e}")
+        task_id = enqueue_upload(file_bytes, file.filename, group_id)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except RuntimeError as e:
+        raise HTTPException(500, str(e))
 
-    return {"task_id": task.id}
+    return {"task_id": task_id}
 
 
-@app.get("/status/{task_id}")
+@router.get("/status/{task_id}")
 def status(task_id: str):
-    task = celery_app.AsyncResult(task_id)
-    body: dict[str, object] = {"task_id": task_id, "state": task.state}
-
-    if task.successful():
-        body["result"] = task.result
-    elif task.failed():
-        body["error"] = str(task.result)
-
-    return body
+    return get_task_status(task_id)
 
 
-@app.get("/groups", response_model=list[GroupSummary])
+@router.get("/groups", response_model=list[GroupSummary])
 def list_groups(store: VectorStoreBase = Depends(get_vector_store)):
     return store.list_groups()
 
 
-@app.get("/groups/{group_id}", response_model=GroupSummary)
+@router.get("/groups/{group_id}", response_model=GroupSummary)
 def get_group(group_id: str, store: VectorStoreBase = Depends(get_vector_store)):
     try:
         group = store.get_group(group_id)
@@ -420,7 +377,7 @@ def get_group(group_id: str, store: VectorStoreBase = Depends(get_vector_store))
     return group
 
 
-@app.delete("/groups/{group_id}", response_model=DeleteResponse)
+@router.delete("/groups/{group_id}", response_model=DeleteResponse)
 def delete_group(group_id: str, store: VectorStoreBase = Depends(get_vector_store)):
     try:
         deleted = store.delete_group(group_id)
@@ -429,7 +386,7 @@ def delete_group(group_id: str, store: VectorStoreBase = Depends(get_vector_stor
     return DeleteResponse(deleted_chunks=deleted)
 
 
-@app.get("/groups/{group_id}/files", response_model=list[FileSummary])
+@router.get("/groups/{group_id}/files", response_model=list[FileSummary])
 def list_files(group_id: str, store: VectorStoreBase = Depends(get_vector_store)):
     try:
         return store.list_files(group_id)
@@ -437,7 +394,7 @@ def list_files(group_id: str, store: VectorStoreBase = Depends(get_vector_store)
         raise HTTPException(422, str(e))
 
 
-@app.delete("/groups/{group_id}/files/{file_id:path}", response_model=DeleteResponse)
+@router.delete("/groups/{group_id}/files/{file_id:path}", response_model=DeleteResponse)
 def delete_file(
     group_id: str,
     file_id: str,
@@ -450,7 +407,7 @@ def delete_file(
     return DeleteResponse(deleted_chunks=deleted)
 
 
-@app.post("/chat", response_model=ChatResponse, response_model_exclude_none=True)
+@router.post("/chat", response_model=ChatResponse, response_model_exclude_none=True)
 def chat(
     payload: ChatRequest,
     embedder: EmbeddingEngineBase = Depends(get_embedding_engine),
@@ -525,7 +482,7 @@ def chat(
     )
 
 
-@app.post("/debug/search", response_model=DebugSearchResponse, response_model_exclude_none=True)
+@router.post("/debug/search", response_model=DebugSearchResponse, response_model_exclude_none=True)
 def debug_search(
     payload: DebugSearchRequest,
     embedder: EmbeddingEngineBase = Depends(get_embedding_engine),
@@ -549,7 +506,7 @@ def debug_search(
     )
 
 
-@app.get("/chunks/{chunk_id}", response_model=ChunkDetail, response_model_exclude_none=True)
+@router.get("/chunks/{chunk_id}", response_model=ChunkDetail, response_model_exclude_none=True)
 def get_chunk_detail(
     chunk_id: str,
     q: str | None = Query(None, description="Optional query term for match highlighting"),
