@@ -6,12 +6,32 @@ import {
   Loader2,
   RefreshCw,
   Send,
+  Settings,
   Trash2,
+  TriangleAlert,
   Upload,
   XCircle,
 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import { ScrollArea } from "@/components/ui/scroll-area"
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from "@/components/ui/sheet"
+import { Slider } from "@/components/ui/slider"
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000"
 const GROUP_ID_REGEX = /^[A-Za-z0-9_.-]+$/
@@ -130,6 +150,7 @@ export function App() {
   const [indexedFiles, setIndexedFiles] = React.useState<FileSummary[]>([])
   const [managementError, setManagementError] = React.useState<string | null>(null)
   const [isRefreshingGroup, setIsRefreshingGroup] = React.useState(false)
+  const [deleteTarget, setDeleteTarget] = React.useState<{ kind: "file"; fileSummary: FileSummary } | { kind: "group" } | null>(null)
 
   async function refreshGroup() {
     const cleanGroupId = groupId.trim()
@@ -213,6 +234,10 @@ export function App() {
   }, [taskId])
 
   React.useEffect(() => {
+    void refreshGroup()
+  }, [])
+
+  React.useEffect(() => {
     if (taskStatus?.state === "SUCCESS") {
       void refreshGroup()
     }
@@ -280,14 +305,13 @@ export function App() {
   }
 
   async function handleDeleteFile(fileSummary: FileSummary) {
-    if (
-      !window.confirm(
-        `Permanently delete embeddings for ${fileSummary.filename} from ${fileSummary.group_id}?`,
-      )
-    ) {
-      return
-    }
+    setDeleteTarget({ kind: "file", fileSummary })
+  }
 
+  async function confirmDeleteFile() {
+    if (deleteTarget?.kind !== "file") return
+    const { fileSummary } = deleteTarget
+    setDeleteTarget(null)
     setManagementError(null)
     try {
       const response = await fetch(
@@ -305,20 +329,17 @@ export function App() {
   }
 
   async function handleDeleteGroup() {
+    setDeleteTarget({ kind: "group" })
+  }
+
+  async function confirmDeleteGroup() {
     const cleanGroupId = groupId.trim()
     if (!GROUP_ID_REGEX.test(cleanGroupId)) {
       setManagementError("Use a valid group id before deleting.")
+      setDeleteTarget(null)
       return
     }
-
-    if (
-      !window.confirm(
-        `Permanently delete all embeddings for group ${cleanGroupId}?`,
-      )
-    ) {
-      return
-    }
-
+    setDeleteTarget(null)
     setManagementError(null)
     try {
       const response = await fetch(
@@ -407,9 +428,9 @@ export function App() {
     )
 
   return (
-    <main className="min-h-svh bg-background text-foreground">
-      <div className="mx-auto grid min-h-svh w-full max-w-7xl gap-4 p-4 lg:grid-cols-[360px_1fr] lg:p-6">
-        <section className="flex min-w-0 flex-col gap-4 rounded-md border bg-card p-4 shadow-sm">
+    <main className="h-svh bg-background text-foreground">
+      <div className="mx-auto grid h-svh w-full max-w-7xl gap-4 p-4 lg:grid-cols-[360px_1fr] lg:p-6">
+        <section className="flex min-w-0 flex-col gap-4 overflow-y-auto rounded-md border bg-card p-4 shadow-sm">
           <div className="min-w-0">
             <h1 className="text-xl font-semibold tracking-normal">Local RAG</h1>
             <p className="text-sm text-muted-foreground">
@@ -520,38 +541,40 @@ export function App() {
             )}
 
             {indexedFiles.length ? (
-              <div className="flex flex-col gap-2">
-                {indexedFiles.map((item) => (
-                  <div
-                    key={item.file_id}
-                    className="flex items-center justify-between gap-2 rounded-md border p-2"
-                  >
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-medium">{item.filename}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {item.chunks} chunks
-                        {item.pages.length ? `, ${item.pages.length} pages` : ""}
-                        {item.legacy ? ", legacy" : ""}
-                      </p>
-                    </div>
-                    <Button
-                      size="icon"
-                      type="button"
-                      variant="outline"
-                      onClick={() => void handleDeleteFile(item)}
+              <ScrollArea className="max-h-48">
+                <div className="flex flex-col gap-2">
+                  {indexedFiles.map((item) => (
+                    <div
+                      key={item.file_id}
+                      className="flex items-center justify-between gap-2 rounded-md border p-2"
                     >
-                      <Trash2 className="size-4" />
-                      <span className="sr-only">Delete file embeddings</span>
-                    </Button>
-                  </div>
-                ))}
-              </div>
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-medium">{item.filename}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {item.chunks} chunks
+                          {item.pages.length ? `, ${item.pages.length} pages` : ""}
+                          {item.legacy ? ", legacy" : ""}
+                        </p>
+                      </div>
+                      <Button
+                        size="icon"
+                        type="button"
+                        variant="destructive"
+                        onClick={() => void handleDeleteFile(item)}
+                      >
+                        <Trash2 className="size-4" />
+                        <span className="sr-only">Delete file embeddings</span>
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              </ScrollArea>
             ) : null}
 
             {groupSummary ? (
               <Button
                 type="button"
-                variant="outline"
+                variant="destructive"
                 onClick={() => void handleDeleteGroup()}
               >
                 <Trash2 className="size-4" />
@@ -564,45 +587,54 @@ export function App() {
             ) : null}
           </div>
 
-          <div className="flex flex-col gap-3 rounded-md border bg-background p-3">
-            <div>
-              <h3 className="text-sm font-medium">Chat Settings</h3>
-              <p className="text-xs text-muted-foreground">
-                Configure retrieval and grounding per request.
-              </p>
-            </div>
+          <Sheet>
+            <SheetTrigger asChild>
+              <Button variant="outline" size="sm">
+                <Settings className="size-4" />
+                Chat Settings
+              </Button>
+            </SheetTrigger>
+            <SheetContent side="right" className="flex flex-col gap-6">
+              <SheetHeader>
+                <SheetTitle>Chat Settings</SheetTitle>
+                <SheetDescription>
+                  Configure retrieval and grounding per request.
+                </SheetDescription>
+              </SheetHeader>
 
-            <label className="flex flex-col gap-1.5 text-sm font-medium">
-              Sources to retrieve
-              <input
-                className="h-10 rounded-md border bg-background px-3 text-sm outline-none transition focus:border-ring focus:ring-3 focus:ring-ring/20"
-                type="number"
-                min={1}
-                max={20}
-                value={sourceLimit}
-                onChange={(event) => {
-                  const value = Number(event.target.value)
-                  setSourceLimit(Number.isFinite(value) ? Math.min(20, Math.max(1, value)) : 5)
-                }}
-              />
-            </label>
+              <div className="flex flex-col gap-4 px-6">
+                <div className="flex flex-col gap-2 text-sm">
+                  <div className="flex items-center justify-between font-medium">
+                    <span>Sources to retrieve</span>
+                    <span className="tabular-nums text-muted-foreground">{sourceLimit}</span>
+                  </div>
+                  <Slider
+                    value={[sourceLimit]}
+                    onValueChange={([value]) => setSourceLimit(value)}
+                    min={1}
+                    max={20}
+                    step={1}
+                  />
+                </div>
 
-            <label className="flex items-start gap-2 text-sm">
-              <input
-                className="mt-1"
-                type="checkbox"
-                checked={requireCitations}
-                onChange={(event) => setRequireCitations(event.target.checked)}
-              />
-              <span>
-                <span className="block font-medium">Require source citations</span>
-                <span className="block text-xs text-muted-foreground">
-                  When enabled, uncited document answers are replaced with an
-                  insufficient-context response.
-                </span>
-              </span>
-            </label>
-          </div>
+                <label className="flex items-start gap-2 text-sm">
+                  <input
+                    className="mt-1"
+                    type="checkbox"
+                    checked={requireCitations}
+                    onChange={(event) => setRequireCitations(event.target.checked)}
+                  />
+                  <span>
+                    <span className="block font-medium">Require source citations</span>
+                    <span className="block text-xs text-muted-foreground">
+                      When enabled, uncited document answers are replaced with an
+                      insufficient-context response.
+                    </span>
+                  </span>
+                </label>
+              </div>
+            </SheetContent>
+          </Sheet>
         </section>
 
         <section className="flex min-h-[70svh] min-w-0 flex-col rounded-md border bg-card shadow-sm">
@@ -613,7 +645,8 @@ export function App() {
             </p>
           </div>
 
-          <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-4">
+          <ScrollArea className="min-h-0 flex-1">
+            <div className="flex flex-col gap-4 p-4">
             {messages.length === 0 ? (
               <div className="flex min-h-40 items-center justify-center rounded-md border border-dashed text-sm text-muted-foreground">
                 Ask a question after indexing.
@@ -624,8 +657,8 @@ export function App() {
                   key={message.id}
                   className={
                     message.role === "user"
-                      ? "ml-auto max-w-[82%] rounded-md bg-primary p-3 text-sm text-primary-foreground"
-                      : "mr-auto max-w-[88%] rounded-md border bg-background p-3 text-sm"
+                      ? "ml-auto max-w-[82%] break-words rounded-md bg-primary p-3 text-sm text-primary-foreground"
+                      : "mr-auto max-w-[88%] break-words rounded-md border bg-background p-3 text-sm"
                   }
                 >
                   {message.role === "assistant" ? (
@@ -696,7 +729,8 @@ export function App() {
                 </article>
               ))
             )}
-          </div>
+            </div>
+          </ScrollArea>
 
           <form className="border-t p-4" onSubmit={handleChat}>
             {chatError ? (
@@ -721,6 +755,28 @@ export function App() {
           </form>
         </section>
       </div>
+
+      <Dialog open={deleteTarget !== null} onOpenChange={(open) => { if (!open) setDeleteTarget(null) }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <TriangleAlert className="size-5 text-destructive" />
+              {deleteTarget?.kind === "file" ? "Delete file embeddings" : "Delete group embeddings"}
+            </DialogTitle>
+            <DialogDescription>
+              {deleteTarget?.kind === "file"
+                ? `Permanently delete embeddings for ${deleteTarget.fileSummary.filename} from ${deleteTarget.fileSummary.group_id}?`
+                : `Permanently delete all embeddings for group ${groupId.trim()}?`}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteTarget(null)}>Cancel</Button>
+            <Button variant="destructive" onClick={() => { if (deleteTarget?.kind === "file") void confirmDeleteFile(); else void confirmDeleteGroup() }}>
+              Delete
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </main>
   )
 }
