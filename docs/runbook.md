@@ -26,7 +26,7 @@ EMBEDDING_MODEL=BAAI/bge-small-en-v1.5
 EMBEDDING_GRPC_URL=localhost:50051
 LLM_PROVIDER=mock
 LLM_GRPC_URL=localhost:50052
-LLM_MODEL=Qwen/Qwen2.5-7B-Instruct
+LLM_MODEL=Qwen/Qwen2.5-3B-Instruct
 LLM_MAX_TOKENS=512
 CELERY_BROKER_URL=redis://localhost:6379/0
 CELERY_RESULT_BACKEND=redis://localhost:6379/0
@@ -98,6 +98,8 @@ The `llm/pyproject.toml` extras route `vllm` and `torch` to different indexes:
 
 - `gpu`: `https://wheels.vllm.ai/0.23.0/cu129` and `https://download.pytorch.org/whl/cu129`
 - `cpu`: `https://wheels.vllm.ai/0.23.0/cpu` and `https://download.pytorch.org/whl/cpu`
+
+The gRPC server defaults to `Qwen/Qwen2.5-3B-Instruct`; override with `LLM_MODEL`. Set `VLLM_GPU_MEMORY_UTIL` if the default `0.88` reservation is too high or low for your GPU.
 
 On Windows, use WSL2, Docker CPU mode, or the mock server for local LLM work.
 

@@ -32,27 +32,39 @@ class VllmGrpcClient:
         self.target = target or settings.llm_grpc_url
         self.model = model or settings.llm_model
         self.max_tokens = max_tokens or settings.llm_max_tokens
+        self._tokenizer = None
+
+    def _get_tokenizer(self):
+        if self._tokenizer is None:
+            from transformers import AutoTokenizer
+            self._tokenizer = AutoTokenizer.from_pretrained(self.model)
+        return self._tokenizer
 
     def generate_response(self, prompt: str, context: list[str]) -> str:
-        # ponytail: vLLM's gRPC proto is owned by vLLM; keep imports lazy so API images do not install vLLM.
-        try:
-            import grpc
-            from vllm.entrypoints.grpc import vllm_engine_pb2, vllm_engine_pb2_grpc
-        except ImportError as exc:
-            raise RuntimeError(
-                "vLLM gRPC client stubs are unavailable. Install vLLM where this client runs "
-                "or override get_llm_client in tests/local mock mode."
-            ) from exc
+        import grpc
+
+        from rag_grpc.vllm_proto import vllm_engine_pb2, vllm_engine_pb2_grpc
 
         prompt_text = "\n\n".join([*context, prompt])
         request = vllm_engine_pb2.GenerateRequest(
             request_id="rag-chat",
-            prompt=prompt_text,
-            model=self.model,
-            sampling_params={"max_tokens": self.max_tokens, "temperature": 0.2},
+            text=prompt_text,
+            sampling_params=vllm_engine_pb2.SamplingParams(
+                max_tokens=self.max_tokens,
+                temperature=0.2,
+            ),
             stream=False,
         )
         with grpc.insecure_channel(self.target) as channel:
             stub = vllm_engine_pb2_grpc.VllmEngineStub(channel)
-            response = stub.Generate(request)
-        return getattr(response, "text", str(response)).strip()
+            token_ids = []
+            for response in stub.Generate(request):
+                if response.HasField("complete"):
+                    token_ids = list(response.complete.output_ids)
+                    break
+                if response.HasField("chunk"):
+                    token_ids.extend(response.chunk.token_ids)
+        if not token_ids:
+            return ""
+        tokenizer = self._get_tokenizer()
+        return tokenizer.decode(token_ids, skip_special_tokens=True).strip()

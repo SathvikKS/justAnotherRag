@@ -3,5 +3,7 @@ FROM vllm/vllm-openai-cpu:latest-x86_64
 WORKDIR /app
 ENV PYTHONPATH="/app/llm/src:${PYTHONPATH}"
 COPY llm ./llm
+RUN pip install vllm[grpc]
 
-CMD ["python", "-m", "rag_llm.serve"]
+ENTRYPOINT []
+CMD ["python3", "-m", "rag_llm.serve"]

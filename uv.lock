@@ -4811,13 +4811,17 @@ version = "0.1.0"
 source = { editable = "packages/rag_grpc" }
 dependencies = [
     { name = "grpcio" },
+    { name = "protobuf" },
     { name = "rag-core" },
+    { name = "transformers" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "grpcio" },
+    { name = "protobuf" },
     { name = "rag-core", editable = "packages/rag_core" },
+    { name = "transformers" },
 ]
 
 [[package]]

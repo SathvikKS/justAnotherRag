@@ -35,7 +35,7 @@ EMBEDDING_MODEL=BAAI/bge-small-en-v1.5
 EMBEDDING_GRPC_URL=localhost:50051
 LLM_PROVIDER=mock
 LLM_GRPC_URL=localhost:50052
-LLM_MODEL=Qwen/Qwen2.5-7B-Instruct
+LLM_MODEL=Qwen/Qwen2.5-3B-Instruct
 CELERY_BROKER_URL=redis://localhost:6379/0
 CELERY_RESULT_BACKEND=redis://localhost:6379/0
 ```
@@ -132,7 +132,8 @@ Services:
 - Redis: `localhost:6379`
 - vLLM gRPC: `localhost:50052`
 
-Docker defaults to `Qwen/Qwen2.5-7B-Instruct` for GPU and `Qwen/Qwen2.5-1.5B-Instruct` for CPU. Override either with `LLM_MODEL`.
+Docker defaults to `Qwen/Qwen2.5-3B-Instruct`. Override with `LLM_MODEL`.
+Set `VLLM_GPU_MEMORY_UTIL` to tune vLLM GPU memory reservation when needed.
 
 ## API
 

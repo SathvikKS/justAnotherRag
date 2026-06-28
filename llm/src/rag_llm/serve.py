@@ -21,7 +21,9 @@ def main() -> None:
         "--port",
         os.getenv("LLM_GRPC_PORT", "50052"),
         "--model",
-        os.getenv("LLM_MODEL", "Qwen/Qwen2.5-7B-Instruct"),
+        os.getenv("LLM_MODEL", "Qwen/Qwen2.5-3B-Instruct"),
+        "--gpu-memory-utilization",
+        os.getenv("VLLM_GPU_MEMORY_UTIL", "0.88"),
     ]
     subprocess.run(cmd, check=True)
 

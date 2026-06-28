@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     embedding_grpc_url: str = "localhost:50051"
     llm_provider: str = "vllm"
     llm_grpc_url: str = "localhost:50052"
-    llm_model: str = "Qwen/Qwen2.5-7B-Instruct"
+    llm_model: str = "Qwen/Qwen2.5-3B-Instruct"
     llm_max_tokens: int = 512
     celery_broker_url: str = "redis://localhost:6379/0"
     celery_result_backend: str = "redis://localhost:6379/0"
