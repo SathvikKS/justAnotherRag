@@ -29,6 +29,9 @@ services:
       EMBEDDING_GRPC_URL: embedding_service:50051
       CELERY_BROKER_URL: redis://redis_broker:6379/0
       CELERY_RESULT_BACKEND: redis://redis_broker:6379/0
+      HF_HOME: /app/model_cache/huggingface
+    volumes:
+      - model_cache:/app/model_cache
     depends_on:
       - redis_broker
       - embedding_service
@@ -41,8 +44,9 @@ services:
       - ./embedding/.env
     environment:
       EMBEDDING_GRPC_PORT: 50051
+      HF_HOME: /app/model_cache/huggingface
     volumes:
-      - hf_cache:/root/.cache/huggingface
+      - model_cache:/app/model_cache
 
   llm_service:
     build:
@@ -53,10 +57,11 @@ services:
     environment:
       LLM_GRPC_HOST: 0.0.0.0
       LLM_GRPC_PORT: 50052
+      HF_HOME: /app/model_cache/huggingface
     ports:
       - "50052:50052"
     volumes:
-      - hf_cache:/root/.cache/huggingface
+      - model_cache:/app/model_cache
     deploy:
       resources:
         reservations:
@@ -81,4 +86,4 @@ services:
       - api_gateway
 
 volumes:
-  hf_cache:
+  model_cache:

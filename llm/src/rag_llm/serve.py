@@ -2,6 +2,11 @@ import os
 import subprocess
 import sys
 import importlib.util
+from pathlib import Path
+from dotenv import load_dotenv
+
+# Load env variables before importing engine or starting sub-processes
+load_dotenv(Path(__file__).resolve().parents[2] / ".env", encoding="utf-8-sig")
 
 
 def main() -> None:

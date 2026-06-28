@@ -37,6 +37,9 @@ LLM_MAX_TOKENS=512
 VLLM_GPU_MEMORY_UTIL=0.88
 CELERY_BROKER_URL=redis://localhost:6379/0
 CELERY_RESULT_BACKEND=redis://localhost:6379/0
+
+# Model Cache Paths (Local Dev)
+HF_HOME=../model_cache/huggingface
 ```
 
 Compose also reads those service `.env` files with `env_file`. It overrides hostnames to Docker network names: `redis_broker:6379`, `embedding_service:50051`, and `llm_service:50052`.
@@ -115,6 +118,18 @@ On Windows, use `--pool=solo` for Celery local development.
 The ingestion worker caches Docling once per worker process. With `--pool=solo`, Docling/OCR models load once. With process concurrency such as `--concurrency=4`, expect roughly four independent Docling/OCR model stacks in memory. If Docling later runs on GPU, that same pattern duplicates VRAM usage, so keep GPU-backed ingestion at one process per GPU unless capacity has been measured.
 
 With `DOCLING_WARMUP_ENABLED=true`, each worker process runs a small synthetic PDF through Docling during startup. This shifts tokenizer/OCR/model initialization cost from the first user upload to worker boot time.
+
+## Model Caching & Storage
+
+To prevent models from being downloaded into arbitrary directories or container layers, model storage is unified under the `model_cache` folder:
+- **Hugging Face Hub Models (`HF_HOME`):** Stores embedding models, tokenizers, and LLMs under `model_cache/huggingface`.
+
+### Docker Mounting
+In Docker Compose, a named volume `model_cache` is mounted at `/app/model_cache` inside the container for `embedding_service`, `llm_service`, and `ingestion_worker`. Environment variables point libraries to their unified subfolders:
+- `HF_HOME=/app/model_cache/huggingface`
+
+### Local Development
+Each service's `.env` configuration contains relative paths to point to a shared `../model_cache` directory, allowing you to easily delete the cache to reclaim local disk space.
 
 ## Docker
 

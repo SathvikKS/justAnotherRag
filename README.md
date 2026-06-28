@@ -49,6 +49,9 @@ LLM_MODEL=Qwen/Qwen2.5-3B-Instruct
 VLLM_GPU_MEMORY_UTIL=0.88
 CELERY_BROKER_URL=redis://localhost:6379/0
 CELERY_RESULT_BACKEND=redis://localhost:6379/0
+
+# Model Cache Paths (Local Dev)
+HF_HOME=../model_cache/huggingface
 ```
 
 For local filesystem LanceDB storage shared by API and ingestion, set `LANCEDB_URI=../lancedb_data` in both `api/.env` and `ingestion/.env`.
@@ -60,6 +63,12 @@ Docling OCR is configured only in `ingestion/.env`. `DOCLING_OCR_ENGINE=auto` is
 The ingestion worker caches its `DoclingParser` once per worker process. If you increase Celery process concurrency, each process loads its own Docling/OCR pipeline state. That is mostly a RAM cost on CPU, but it becomes a VRAM multiplier if ingestion later moves to GPU-backed Docling. Prefer one GPU-backed ingestion process per GPU rather than high Celery process concurrency.
 
 With `DOCLING_WARMUP_ENABLED=true`, the ingestion worker also runs a tiny synthetic PDF through Docling at worker startup so tokenizer/OCR/pipeline initialization happens before the first user upload.
+
+### Model Caching & Storage
+To avoid downloading models to arbitrary system paths, model storage is unified under the `model_cache/` directory:
+- **`HF_HOME` (`model_cache/huggingface`):** Stores embedding models, tokenizers, and LLMs.
+
+In Docker, the named volume `model_cache` is mounted at `/app/model_cache` across `ingestion_worker`, `embedding_service`, and `llm_service` to persist downloads and optimize startup times.
 
 ## Local Dev
 

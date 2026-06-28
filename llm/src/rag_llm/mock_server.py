@@ -2,6 +2,11 @@ import json
 import os
 import time
 from concurrent import futures
+from pathlib import Path
+from dotenv import load_dotenv
+
+# Load env variables before importing engine or starting server
+load_dotenv(Path(__file__).resolve().parents[2] / ".env", encoding="utf-8-sig")
 
 import grpc
 
