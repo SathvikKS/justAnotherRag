@@ -6,7 +6,6 @@ import {
   RouterProvider,
   redirect,
   Outlet,
-  useNavigate,
 } from "@tanstack/react-router"
 import { Loader2, Lock, TriangleAlert } from "lucide-react"
 
@@ -19,13 +18,16 @@ import { Label } from "@/components/ui/label"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { API_BASE_URL, readError } from "@/lib/api"
 
+interface AuthState {
+  isAuthenticated: boolean
+  token: string | null
+  username: string | null
+  login: (token: string, username: string) => void
+  logout: () => void
+}
+
 interface MyRouterContext {
-  auth: {
-    token: string | null
-    username: string | null
-    login: (token: string, username: string) => void
-    logout: () => void
-  }
+  auth: AuthState
 }
 
 export const rootRoute = createRootRouteWithContext<MyRouterContext>()({
@@ -35,9 +37,14 @@ export const rootRoute = createRootRouteWithContext<MyRouterContext>()({
 const authenticatedRoute = createRoute({
   getParentRoute: () => rootRoute,
   id: "authenticated",
-  beforeLoad: ({ context }) => {
-    if (!context.auth.token) {
-      throw redirect({ to: "/login" })
+  beforeLoad: ({ context, location }) => {
+    if (!context.auth.isAuthenticated) {
+      throw redirect({
+        to: "/login",
+        search: {
+          redirect: location.href,
+        },
+      })
     }
   },
   component: AuthenticatedLayout,
@@ -45,11 +52,15 @@ const authenticatedRoute = createRoute({
 
 function AuthenticatedLayout() {
   const { auth } = rootRoute.useRouteContext()
-  if (!auth.token) return null
+
+  const handleLogout = () => {
+    auth.logout()
+  }
+
   return (
     <AppDashboard
       username={auth.username}
-      onLogout={auth.logout}
+      onLogout={handleLogout}
     />
   )
 }
@@ -64,10 +75,9 @@ function UploadPage() {
 
 function ChatPage() {
   const { auth } = rootRoute.useRouteContext()
-  if (!auth.token) return null
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <ChatSection token={auth.token} />
+      <ChatSection token={auth.token!} />
     </div>
   )
 }
@@ -87,10 +97,44 @@ const chatRoute = createRoute({
 const indexRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/",
-  beforeLoad: () => {
-    throw redirect({ to: "/upload" })
+  beforeLoad: ({ context }) => {
+    throw redirect({ to: context.auth.isAuthenticated ? "/upload" : "/login" })
   },
 })
+
+const DEFAULT_AUTH_REDIRECT = "/upload"
+const LOGIN_PATH = "/login"
+
+function normalizeAuthRedirect(redirectTarget: unknown) {
+  if (typeof redirectTarget !== "string" || !redirectTarget) {
+    return DEFAULT_AUTH_REDIRECT
+  }
+
+  const base =
+    typeof window === "undefined" ? "http://localhost" : window.location.origin
+
+  try {
+    const url = new URL(redirectTarget, base)
+
+    if (url.origin !== base) {
+      return DEFAULT_AUTH_REDIRECT
+    }
+
+    const target = `${url.pathname}${url.search}${url.hash}`
+
+    if (
+      target === LOGIN_PATH ||
+      target.startsWith(`${LOGIN_PATH}?`) ||
+      target.startsWith(`${LOGIN_PATH}#`)
+    ) {
+      return DEFAULT_AUTH_REDIRECT
+    }
+
+    return target.startsWith("/") ? target : DEFAULT_AUTH_REDIRECT
+  } catch {
+    return DEFAULT_AUTH_REDIRECT
+  }
+}
 
 function LoginPage() {
   const { auth } = rootRoute.useRouteContext()
@@ -99,7 +143,6 @@ function LoginPage() {
   const [authLoading, setAuthLoading] = React.useState(false)
   const [authError, setAuthError] = React.useState<string | null>(null)
   const [authMode, setAuthMode] = React.useState<"login" | "register">("login")
-  const navigate = useNavigate()
 
   const handleAuthSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -135,7 +178,6 @@ function LoginPage() {
 
       const data = await res.json()
       auth.login(data.access_token, data.username)
-      void navigate({ to: "/upload" })
     } catch (err) {
       setAuthError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -218,9 +260,12 @@ function LoginPage() {
 const loginRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/login",
-  beforeLoad: ({ context }) => {
-    if (context.auth.token) {
-      throw redirect({ to: "/upload" })
+  validateSearch: (search: Record<string, unknown>) => {
+    return { redirect: normalizeAuthRedirect(search.redirect) }
+  },
+  beforeLoad: ({ context, search }) => {
+    if (context.auth.isAuthenticated) {
+      throw redirect({ to: search.redirect })
     }
   },
   component: LoginPage,
@@ -239,6 +284,20 @@ const router = createRouter({
   },
 })
 
+function InnerApp({ auth }: { auth: AuthState }) {
+  const tokenRef = React.useRef(auth.token)
+
+  React.useEffect(() => {
+    if (tokenRef.current === auth.token) {
+      return
+    }
+    tokenRef.current = auth.token
+    void router.invalidate()
+  }, [auth.token, auth.isAuthenticated])
+
+  return <RouterProvider router={router} context={{ auth }} />
+}
+
 declare module "@tanstack/react-router" {
   interface Register {
     router: typeof router
@@ -249,32 +308,29 @@ export function App() {
   const [token, setToken] = React.useState<string | null>(() => localStorage.getItem("token"))
   const [username, setUsername] = React.useState<string | null>(() => localStorage.getItem("username"))
 
-  const login = (newToken: string, newUsername: string) => {
-    localStorage.setItem("token", newToken)
-    localStorage.setItem("username", newUsername)
-    setToken(newToken)
-    setUsername(newUsername)
-  }
-
-  const logout = () => {
-    localStorage.removeItem("token")
-    localStorage.removeItem("username")
-    setToken(null)
-    setUsername(null)
-  }
+  const auth = React.useMemo<AuthState>(
+    () => ({
+      isAuthenticated: token !== null,
+      token,
+      username,
+      login: (newToken: string, newUsername: string) => {
+        localStorage.setItem("token", newToken)
+        localStorage.setItem("username", newUsername)
+        setToken(newToken)
+        setUsername(newUsername)
+      },
+      logout: () => {
+        localStorage.removeItem("token")
+        localStorage.removeItem("username")
+        setToken(null)
+        setUsername(null)
+      },
+    }),
+    [token, username],
+  )
 
   return (
-    <RouterProvider
-      router={router}
-      context={{
-        auth: {
-          token,
-          username,
-          login,
-          logout,
-        },
-      }}
-    />
+    <InnerApp auth={auth} />
   )
 }
 
