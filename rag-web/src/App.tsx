@@ -10,7 +10,9 @@ import {
 } from "@tanstack/react-router"
 import { Loader2, Lock, TriangleAlert } from "lucide-react"
 
+import { ChatSection } from "@/components/chat/chat-section"
 import { AppDashboard } from "@/components/layout/app-dashboard"
+import { UploadSection } from "@/components/upload/upload-section"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -38,25 +40,56 @@ const authenticatedRoute = createRoute({
       throw redirect({ to: "/login" })
     }
   },
-  component: () => <Outlet />,
+  component: AuthenticatedLayout,
 })
 
-function AuthenticatedDashboard() {
+function AuthenticatedLayout() {
   const { auth } = rootRoute.useRouteContext()
   if (!auth.token) return null
   return (
     <AppDashboard
-      token={auth.token}
       username={auth.username}
       onLogout={auth.logout}
     />
   )
 }
 
-const indexRoute = createRoute({
+function UploadPage() {
+  return (
+    <div className="flex-1 overflow-y-auto">
+      <UploadSection />
+    </div>
+  )
+}
+
+function ChatPage() {
+  const { auth } = rootRoute.useRouteContext()
+  if (!auth.token) return null
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <ChatSection token={auth.token} />
+    </div>
+  )
+}
+
+const uploadRoute = createRoute({
   getParentRoute: () => authenticatedRoute,
+  path: "/upload",
+  component: UploadPage,
+})
+
+const chatRoute = createRoute({
+  getParentRoute: () => authenticatedRoute,
+  path: "/chat",
+  component: ChatPage,
+})
+
+const indexRoute = createRoute({
+  getParentRoute: () => rootRoute,
   path: "/",
-  component: AuthenticatedDashboard,
+  beforeLoad: () => {
+    throw redirect({ to: "/upload" })
+  },
 })
 
 function LoginPage() {
@@ -102,7 +135,7 @@ function LoginPage() {
 
       const data = await res.json()
       auth.login(data.access_token, data.username)
-      void navigate({ to: "/" })
+      void navigate({ to: "/upload" })
     } catch (err) {
       setAuthError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -187,14 +220,15 @@ const loginRoute = createRoute({
   path: "/login",
   beforeLoad: ({ context }) => {
     if (context.auth.token) {
-      throw redirect({ to: "/" })
+      throw redirect({ to: "/upload" })
     }
   },
   component: LoginPage,
 })
 
 const routeTree = rootRoute.addChildren([
-  authenticatedRoute.addChildren([indexRoute]),
+  indexRoute,
+  authenticatedRoute.addChildren([uploadRoute, chatRoute]),
   loginRoute,
 ])
 

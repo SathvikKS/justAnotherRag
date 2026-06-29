@@ -1,11 +1,9 @@
-import * as React from "react"
+import { Outlet, useNavigate, useRouterState } from "@tanstack/react-router"
 import { LogOut, MessageSquare, Upload, User } from "lucide-react"
 
-import { ChatSection } from "@/components/chat/chat-section"
-import { UploadSection } from "@/components/upload/upload-section"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
   Tooltip,
   TooltipContent,
@@ -13,15 +11,24 @@ import {
 } from "@/components/ui/tooltip"
 
 type AppDashboardProps = {
-  token: string
   username: string | null
   onLogout: () => void
 }
 
-export function AppDashboard({ token, username, onLogout }: AppDashboardProps) {
+export function AppDashboard({ username, onLogout }: AppDashboardProps) {
+  const navigate = useNavigate()
+  const pathname = useRouterState({ select: (state) => state.location.pathname })
+  const activeTab = pathname.startsWith("/chat") ? "chat" : "upload"
+
   return (
     <main className="flex h-svh flex-col bg-background text-foreground">
-      <Tabs defaultValue="upload" className="flex min-h-0 flex-1 flex-col">
+      <Tabs
+        value={activeTab}
+        onValueChange={(value) => {
+          void navigate({ to: value === "chat" ? "/chat" : "/upload" })
+        }}
+        className="flex min-h-0 flex-1 flex-col"
+      >
         <header className="flex shrink-0 items-center justify-between gap-4 border-b px-6 py-4">
           <div className="flex min-w-0 items-center gap-6">
             <h1 className="text-lg font-semibold">Local RAG</h1>
@@ -56,13 +63,7 @@ export function AppDashboard({ token, username, onLogout }: AppDashboardProps) {
         </header>
 
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-6">
-          <TabsContent value="upload" className="mt-0 flex-1 overflow-y-auto">
-            <UploadSection />
-          </TabsContent>
-
-          <TabsContent value="chat" className="mt-0 flex min-h-0 flex-1 flex-col data-[state=inactive]:hidden">
-            <ChatSection token={token} />
-          </TabsContent>
+          <Outlet />
         </div>
       </Tabs>
     </main>
