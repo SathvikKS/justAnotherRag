@@ -57,12 +57,7 @@ function AuthenticatedLayout() {
     auth.logout()
   }
 
-  return (
-    <AppDashboard
-      username={auth.username}
-      onLogout={handleLogout}
-    />
-  )
+  return <AppDashboard username={auth.username} onLogout={handleLogout} />
 }
 
 function UploadPage() {
@@ -247,7 +242,10 @@ function LoginPage() {
 
           <Button type="submit" disabled={authLoading} className="w-full">
             {authLoading ? (
-              <Loader2 className="size-4 shrink-0 animate-spin" aria-hidden="true" />
+              <Loader2
+                className="size-4 shrink-0 animate-spin"
+                aria-hidden="true"
+              />
             ) : null}
             {authMode === "login" ? "Sign in" : "Sign up"}
           </Button>
@@ -305,8 +303,12 @@ declare module "@tanstack/react-router" {
 }
 
 export function App() {
-  const [token, setToken] = React.useState<string | null>(() => localStorage.getItem("token"))
-  const [username, setUsername] = React.useState<string | null>(() => localStorage.getItem("username"))
+  const [token, setToken] = React.useState<string | null>(() =>
+    localStorage.getItem("token")
+  )
+  const [username, setUsername] = React.useState<string | null>(() =>
+    localStorage.getItem("username")
+  )
 
   const auth = React.useMemo<AuthState>(
     () => ({
@@ -326,12 +328,10 @@ export function App() {
         setUsername(null)
       },
     }),
-    [token, username],
+    [token, username]
   )
 
-  return (
-    <InnerApp auth={auth} />
-  )
+  return <InnerApp auth={auth} />
 }
 
 export default App

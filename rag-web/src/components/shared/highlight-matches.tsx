@@ -1,6 +1,9 @@
 import * as React from "react"
 
-export function highlightMatches(text: string, positions: number[][]): React.ReactNode {
+export function highlightMatches(
+  text: string,
+  positions: number[][]
+): React.ReactNode {
   if (!positions.length) return text
   const sorted = [...positions].sort((a, b) => a[0] - b[0])
   const parts: React.ReactNode[] = []
@@ -12,7 +15,10 @@ export function highlightMatches(text: string, positions: number[][]): React.Rea
       parts.push(text.slice(cursor, start))
     }
     parts.push(
-      <mark key={i} className="rounded-sm bg-amber-500/25 px-0.5 text-foreground">
+      <mark
+        key={i}
+        className="rounded-sm bg-amber-500/25 px-0.5 text-foreground"
+      >
         {text.slice(start, end)}
       </mark>
     )

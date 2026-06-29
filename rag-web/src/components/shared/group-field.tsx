@@ -8,7 +8,12 @@ type GroupFieldProps = {
   label?: string
 }
 
-export function GroupField({ id, value, onChange, label = "Group" }: GroupFieldProps) {
+export function GroupField({
+  id,
+  value,
+  onChange,
+  label = "Group",
+}: GroupFieldProps) {
   return (
     <div className="flex flex-col gap-2">
       <Label htmlFor={id}>{label}</Label>

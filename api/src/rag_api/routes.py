@@ -498,6 +498,8 @@ async def upload(
     group_id: str = Form(...),
 ):
     file_bytes = await file.read()
+    if len(file_bytes) > 50 * 1024 * 1024:
+        raise HTTPException(400, "File size exceeds 50MB limit.")
 
     try:
         task_id = enqueue_upload(file_bytes, file.filename, group_id)

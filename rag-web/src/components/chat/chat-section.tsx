@@ -51,7 +51,9 @@ type ChatSectionProps = {
 export function ChatSection({ token }: ChatSectionProps) {
   const [groupId, setGroupId] = React.useState("demo")
   const [sessions, setSessions] = React.useState<ChatSession[]>([])
-  const [currentSessionId, setCurrentSessionId] = React.useState<string | null>(null)
+  const [currentSessionId, setCurrentSessionId] = React.useState<string | null>(
+    null
+  )
   const [sessionsLoading, setSessionsLoading] = React.useState(false)
   const [query, setQuery] = React.useState("")
   const [queryMode, setQueryMode] = React.useState<QueryMode>("chat")
@@ -63,8 +65,12 @@ export function ChatSection({ token }: ChatSectionProps) {
   const [chatError, setChatError] = React.useState<string | null>(null)
   const [isChatting, setIsChatting] = React.useState(false)
   const [lastQuery, setLastQuery] = React.useState("")
-  const [expandedChunks, setExpandedChunks] = React.useState<Map<string, ChunkDetail>>(new Map())
-  const [loadingChunks, setLoadingChunks] = React.useState<Set<string>>(new Set())
+  const [expandedChunks, setExpandedChunks] = React.useState<
+    Map<string, ChunkDetail>
+  >(new Map())
+  const [loadingChunks, setLoadingChunks] = React.useState<Set<string>>(
+    new Set()
+  )
 
   const createSession = React.useCallback(
     async (title?: string) => {
@@ -85,7 +91,9 @@ export function ChatSection({ token }: ChatSectionProps) {
         return data.id
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err)
-        showErrorToast("Failed to create conversation", { description: message })
+        showErrorToast("Failed to create conversation", {
+          description: message,
+        })
         return undefined
       }
     },
@@ -106,7 +114,10 @@ export function ChatSection({ token }: ChatSectionProps) {
         if (data.length > 0) {
           if (selectedId && data.some((s) => s.id === selectedId)) {
             setCurrentSessionId(selectedId)
-          } else if (!currentSessionId || !data.some((s) => s.id === currentSessionId)) {
+          } else if (
+            !currentSessionId ||
+            !data.some((s) => s.id === currentSessionId)
+          ) {
             setCurrentSessionId(data[0].id)
           }
         } else {
@@ -151,9 +162,12 @@ export function ChatSection({ token }: ChatSectionProps) {
   const loadMessages = React.useCallback(
     async (sid: string) => {
       try {
-        const res = await fetch(`${API_BASE_URL}/chat/sessions/${sid}/messages`, {
-          headers: { Authorization: `Bearer ${token}` },
-        })
+        const res = await fetch(
+          `${API_BASE_URL}/chat/sessions/${sid}/messages`,
+          {
+            headers: { Authorization: `Bearer ${token}` },
+          }
+        )
         if (!res.ok) throw new Error(await readError(res))
         const data = (await res.json()) as ChatMessage[]
         setMessages(data)
@@ -216,7 +230,9 @@ export function ChatSection({ token }: ChatSectionProps) {
     if (!cleanQuery) return
 
     if (!GROUP_ID_REGEX.test(cleanGroupId)) {
-      setChatError(`Set a valid group id before ${queryMode === "chat" ? "chatting" : "searching"}.`)
+      setChatError(
+        `Set a valid group id before ${queryMode === "chat" ? "chatting" : "searching"}.`
+      )
       return
     }
 
@@ -319,7 +335,7 @@ export function ChatSection({ token }: ChatSectionProps) {
         </div>
         {snippet ? (
           <div>
-            <p className="whitespace-pre-wrap break-words leading-6 text-muted-foreground">
+            <p className="leading-6 break-words whitespace-pre-wrap text-muted-foreground">
               {highlightMatches(snippet.text, snippet.match_positions)}
               {snippet.full_length > snippet.text.length ? "..." : null}
             </p>
@@ -330,19 +346,29 @@ export function ChatSection({ token }: ChatSectionProps) {
                 size="sm"
                 className="mt-2 h-7 px-2 text-xs"
                 disabled={isLoading}
-                onClick={() => (isExpanded ? collapseChunk(chunkId) : void loadFullChunk(chunkId))}
+                onClick={() =>
+                  isExpanded
+                    ? collapseChunk(chunkId)
+                    : void loadFullChunk(chunkId)
+                }
               >
-                {isLoading ? "Loading..." : isExpanded ? "Hide full chunk" : "Show full chunk"}
+                {isLoading
+                  ? "Loading..."
+                  : isExpanded
+                    ? "Hide full chunk"
+                    : "Show full chunk"}
               </Button>
             ) : null}
             {isExpanded && full ? (
-              <div className="mt-2 rounded-md border bg-muted/30 p-2 text-xs leading-6 whitespace-pre-wrap break-words">
+              <div className="mt-2 rounded-md border bg-muted/30 p-2 text-xs leading-6 break-words whitespace-pre-wrap">
                 {highlightMatches(full.text, full.match_positions ?? [])}
               </div>
             ) : null}
           </div>
         ) : (
-          <p className="text-xs text-muted-foreground italic">No snippet available</p>
+          <p className="text-xs text-muted-foreground italic">
+            No snippet available
+          </p>
         )}
       </article>
     )
@@ -374,7 +400,9 @@ export function ChatSection({ token }: ChatSectionProps) {
             {sessionsLoading && sessions.length === 0 ? (
               <ConversationListSkeleton count={3} />
             ) : sessions.length === 0 ? (
-              <p className="py-4 text-center text-xs text-muted-foreground">No conversations yet.</p>
+              <p className="py-4 text-center text-xs text-muted-foreground">
+                No conversations yet.
+              </p>
             ) : (
               sessions.map((s) => (
                 <button
@@ -383,12 +411,15 @@ export function ChatSection({ token }: ChatSectionProps) {
                   onClick={() => setCurrentSessionId(s.id)}
                   className={`group flex items-center justify-between rounded-md px-2 py-1.5 text-left text-xs transition ${
                     currentSessionId === s.id
-                      ? "bg-primary text-primary-foreground font-medium"
-                      : "hover:bg-muted text-foreground"
+                      ? "bg-primary font-medium text-primary-foreground"
+                      : "text-foreground hover:bg-muted"
                   }`}
                 >
                   <span className="flex min-w-0 flex-1 items-center gap-1.5">
-                    <MessageSquare className="size-3.5 shrink-0 opacity-70" aria-hidden="true" />
+                    <MessageSquare
+                      className="size-3.5 shrink-0 opacity-70"
+                      aria-hidden="true"
+                    />
                     <span className="truncate">{s.title}</span>
                   </span>
                   <Button
@@ -427,20 +458,28 @@ export function ChatSection({ token }: ChatSectionProps) {
 
             <Sheet>
               <SheetTrigger asChild>
-                <Button variant="outline" size="icon" aria-label="Query settings">
+                <Button
+                  variant="outline"
+                  size="icon"
+                  aria-label="Query settings"
+                >
                   <Settings className="size-4 shrink-0" aria-hidden="true" />
                 </Button>
               </SheetTrigger>
               <SheetContent side="right" className="flex flex-col gap-6">
                 <SheetHeader>
                   <SheetTitle>Query settings</SheetTitle>
-                  <SheetDescription>Retrieval and citation options.</SheetDescription>
+                  <SheetDescription>
+                    Retrieval and citation options.
+                  </SheetDescription>
                 </SheetHeader>
                 <div className="flex flex-col gap-6 px-6">
                   <div className="flex flex-col gap-2">
                     <div className="flex items-center justify-between text-sm font-medium">
                       <span>Sources to retrieve</span>
-                      <span className="tabular-nums text-muted-foreground">{sourceLimit}</span>
+                      <span className="text-muted-foreground tabular-nums">
+                        {sourceLimit}
+                      </span>
                     </div>
                     <Slider
                       value={[sourceLimit]}
@@ -452,7 +491,9 @@ export function ChatSection({ token }: ChatSectionProps) {
                   </div>
                   <div className="flex items-center justify-between gap-4">
                     <div className="flex flex-col gap-0.5">
-                      <span className="text-sm font-medium">Require citations</span>
+                      <span className="text-sm font-medium">
+                        Require citations
+                      </span>
                       <span className="text-xs text-muted-foreground">
                         Reject uncited answers
                       </span>
@@ -479,7 +520,8 @@ export function ChatSection({ token }: ChatSectionProps) {
               ) : (
                 <div className="flex flex-col gap-3">
                   <p className="text-sm font-medium">
-                    {searchResults.length} results for &ldquo;{searchQuery}&rdquo;
+                    {searchResults.length} results for &ldquo;{searchQuery}
+                    &rdquo;
                   </p>
                   {searchResults.map((result, index) =>
                     renderSourceCard(result, index, "search")
@@ -496,8 +538,8 @@ export function ChatSection({ token }: ChatSectionProps) {
                   key={message.id}
                   className={
                     message.role === "user"
-                      ? "ml-auto max-w-[82%] break-words rounded-md bg-primary p-3 text-sm text-primary-foreground"
-                      : "mr-auto max-w-[88%] break-words rounded-md border bg-background p-3 text-sm"
+                      ? "ml-auto max-w-[82%] rounded-md bg-primary p-3 text-sm break-words text-primary-foreground"
+                      : "mr-auto max-w-[88%] rounded-md border bg-background p-3 text-sm break-words"
                   }
                 >
                   {message.role === "assistant" && message.grounding ? (
@@ -523,7 +565,9 @@ export function ChatSection({ token }: ChatSectionProps) {
                       </Badge>
                     </div>
                   ) : null}
-                  <p className="whitespace-pre-wrap break-words leading-6">{message.content}</p>
+                  <p className="leading-6 break-words whitespace-pre-wrap">
+                    {message.content}
+                  </p>
                   {message.sources?.length ? (
                     <details className="mt-3 rounded-md border bg-muted/30 p-2">
                       <summary className="cursor-pointer text-xs font-medium text-muted-foreground">
@@ -543,7 +587,9 @@ export function ChatSection({ token }: ChatSectionProps) {
         </ScrollArea>
 
         <form className="border-t p-4" onSubmit={handleChat}>
-          {chatError ? <p className="mb-2 text-sm text-destructive">{chatError}</p> : null}
+          {chatError ? (
+            <p className="mb-2 text-sm text-destructive">{chatError}</p>
+          ) : null}
           <div className="flex gap-2">
             <Textarea
               value={query}
@@ -564,9 +610,17 @@ export function ChatSection({ token }: ChatSectionProps) {
             />
             <Tooltip>
               <TooltipTrigger asChild>
-                <Button size="icon" type="submit" disabled={isChatting} aria-label="Send">
+                <Button
+                  size="icon"
+                  type="submit"
+                  disabled={isChatting}
+                  aria-label="Send"
+                >
                   {isChatting ? (
-                    <Loader2 className="size-4 shrink-0 animate-spin" aria-hidden="true" />
+                    <Loader2
+                      className="size-4 shrink-0 animate-spin"
+                      aria-hidden="true"
+                    />
                   ) : (
                     <Send className="size-4 shrink-0" aria-hidden="true" />
                   )}

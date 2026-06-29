@@ -1,7 +1,6 @@
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
-  Table,
   TableBody,
   TableCell,
   TableHead,
@@ -13,7 +12,9 @@ type ConversationListSkeletonProps = {
   count?: number
 }
 
-export function ConversationListSkeleton({ count = 3 }: ConversationListSkeletonProps) {
+export function ConversationListSkeleton({
+  count = 3,
+}: ConversationListSkeletonProps) {
   return (
     <>
       {Array.from({ length: count }).map((_, index) => (
@@ -37,34 +38,45 @@ type IndexedFilesTableSkeletonProps = {
   rows?: number
 }
 
-export function IndexedFilesTableSkeleton({ rows = 4 }: IndexedFilesTableSkeletonProps) {
+export function IndexedFilesTableSkeleton({
+  rows = 4,
+}: IndexedFilesTableSkeletonProps) {
   return (
     <ScrollArea className="max-h-[360px]">
-      <div className="overflow-auto rounded-md border border-border">
-        <Table>
+      <div className="rounded-md border border-border">
+        <table className="w-full table-fixed caption-bottom text-sm">
+          <colgroup>
+            <col />
+            <col className="w-16" />
+            <col className="w-20" />
+          </colgroup>
           <TableHeader>
             <TableRow>
-              <TableHead>File</TableHead>
-              <TableHead>Chunks</TableHead>
-              <TableHead className="text-right">Actions</TableHead>
+              <TableHead className="sticky top-0 z-10 bg-card">File</TableHead>
+              <TableHead className="sticky top-0 z-10 w-16 bg-card">
+                Chunks
+              </TableHead>
+              <TableHead className="sticky top-0 z-10 w-20 bg-card text-right">
+                Actions
+              </TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {Array.from({ length: rows }).map((_, index) => (
               <TableRow key={index} aria-hidden="true">
-                <TableCell className="max-w-[200px]">
+                <TableCell className="max-w-0">
                   <Skeleton className="h-4 w-full max-w-[160px]" />
                 </TableCell>
-                <TableCell>
-                  <Skeleton className="h-4 w-20" />
+                <TableCell className="w-16">
+                  <Skeleton className="h-3.5 w-14" />
                 </TableCell>
-                <TableCell className="text-right">
+                <TableCell className="w-20 text-right">
                   <Skeleton className="ml-auto size-9 rounded-md" />
                 </TableCell>
               </TableRow>
             ))}
           </TableBody>
-        </Table>
+        </table>
       </div>
     </ScrollArea>
   )

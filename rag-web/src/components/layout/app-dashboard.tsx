@@ -17,7 +17,9 @@ type AppDashboardProps = {
 
 export function AppDashboard({ username, onLogout }: AppDashboardProps) {
   const navigate = useNavigate()
-  const pathname = useRouterState({ select: (state) => state.location.pathname })
+  const pathname = useRouterState({
+    select: (state) => state.location.pathname,
+  })
   const activeTab = pathname.startsWith("/chat") ? "chat" : "upload"
 
   return (
@@ -52,7 +54,12 @@ export function AppDashboard({ username, onLogout }: AppDashboardProps) {
             <Separator orientation="vertical" className="hidden h-5 sm:block" />
             <Tooltip>
               <TooltipTrigger asChild>
-                <Button variant="outline" size="sm" onClick={onLogout} className="gap-1.5">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={onLogout}
+                  className="gap-1.5"
+                >
                   <LogOut className="size-4 shrink-0" aria-hidden="true" />
                   <span className="hidden sm:inline">Logout</span>
                 </Button>
