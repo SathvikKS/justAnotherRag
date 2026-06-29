@@ -60,5 +60,6 @@ class LLMClientBase(ABC):
         prompt: str,
         context: list[str],
         require_citations: bool = False,
+        history: str = "",
     ) -> dict:
         ...

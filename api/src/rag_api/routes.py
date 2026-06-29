@@ -1,12 +1,26 @@
 import re
+import uuid
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel, Field, field_validator
+from sqlmodel import Session
+
+from langchain_postgres import PostgresChatMessageHistory
+from langchain_core.messages import HumanMessage, AIMessage
 
 from rag_api.dependencies import (
     get_embedding_engine,
     get_llm_client,
     get_vector_store,
+)
+from rag_api.database import get_session, get_psycopg_conn
+from rag_api.models import User, ChatSession
+from rag_api.auth import (
+    get_current_user,
+    create_access_token,
+    get_password_hash,
+    verify_password,
 )
 from rag_api.ingestion import get_task_status, enqueue_upload, GROUP_ID_REGEX
 from rag_core.interfaces import EmbeddingEngineBase, LLMClientBase, VectorStoreBase
@@ -19,6 +33,7 @@ class ChatRequest(BaseModel):
     group_id: str
     limit: int = Field(5, ge=1, le=20)
     require_citations: bool = False
+    session_id: str = "11111111-1111-1111-1111-111111111111"
 
     @field_validator("group_id")
     @classmethod
@@ -339,6 +354,144 @@ def grounding_status(
     return grounding
 
 
+class RegisterRequest(BaseModel):
+    username: str = Field(..., min_length=3, max_length=50)
+    password: str = Field(..., min_length=4)
+
+
+class SessionCreateRequest(BaseModel):
+    title: str | None = None
+
+
+@router.post("/auth/register")
+def register(payload: RegisterRequest, db: Session = Depends(get_session)):
+    existing = db.query(User).filter(User.username == payload.username).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="Username already registered")
+
+    password_hash = get_password_hash(payload.password)
+    user = User(username=payload.username, password_hash=password_hash)
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return {"message": "Registration successful", "username": user.username}
+
+
+@router.post("/auth/login")
+def login(
+    form_data: OAuth2PasswordRequestForm = Depends(),
+    db: Session = Depends(get_session)
+):
+    user = db.query(User).filter(User.username == form_data.username).first()
+    if not user or not verify_password(form_data.password, user.password_hash):
+        raise HTTPException(status_code=400, detail="Incorrect username or password")
+
+    access_token = create_access_token(data={"sub": user.username})
+    return {"access_token": access_token, "token_type": "bearer", "username": user.username}
+
+
+@router.get("/chat/sessions", response_model=list[dict])
+def list_sessions(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_session)
+):
+    sessions = db.query(ChatSession).filter(ChatSession.user_id == current_user.id).order_by(ChatSession.created_at.desc()).all()
+    return [
+        {
+            "id": str(s.id),
+            "title": s.title or "Untitled Session",
+            "created_at": s.created_at.isoformat()
+        } for s in sessions
+    ]
+
+
+@router.post("/chat/sessions", response_model=dict)
+def create_session(
+    payload: SessionCreateRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_session)
+):
+    session = ChatSession(user_id=current_user.id, title=payload.title)
+    db.add(session)
+    db.commit()
+    db.refresh(session)
+    return {
+        "id": str(session.id),
+        "title": session.title or "Untitled Session",
+        "created_at": session.created_at.isoformat()
+    }
+
+
+@router.delete("/chat/sessions/{session_id}")
+def delete_session(
+    session_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_session),
+    db_conn = Depends(get_psycopg_conn)
+):
+    try:
+        session_uuid = uuid.UUID(session_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid session_id format")
+
+    session = db.query(ChatSession).filter(
+        ChatSession.id == session_uuid,
+        ChatSession.user_id == current_user.id
+    ).first()
+
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    # Delete session
+    db.delete(session)
+    db.commit()
+
+    # Clean up associated messages in message_store
+    with db_conn.cursor() as cur:
+        cur.execute("DELETE FROM message_store WHERE session_id = %s", (session_id,))
+
+    return {"message": "Session deleted successfully"}
+
+
+@router.get("/chat/sessions/{session_id}/messages")
+def get_session_messages(
+    session_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_session),
+    db_conn = Depends(get_psycopg_conn)
+):
+    try:
+        session_uuid = uuid.UUID(session_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid session_id format")
+
+    session = db.query(ChatSession).filter(
+        ChatSession.id == session_uuid,
+        ChatSession.user_id == current_user.id
+    ).first()
+
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    history = PostgresChatMessageHistory(
+        "message_store",
+        str(session_id),
+        sync_connection=db_conn
+    )
+
+    messages = history.messages
+    return [
+        {
+            "id": f"msg-{i}",
+            "role": "user" if getattr(msg, "type", "") == "human" else "assistant",
+            "content": getattr(msg, "content", ""),
+            "sources": getattr(msg, "additional_kwargs", {}).get("sources", []),
+            "grounding": getattr(msg, "additional_kwargs", {}).get("grounding", {})
+        }
+        for i, msg in enumerate(messages)
+    ]
+
+
 @router.post("/upload")
 async def upload(
     file: UploadFile = File(...),
@@ -410,19 +563,68 @@ def delete_file(
 @router.post("/chat", response_model=ChatResponse, response_model_exclude_none=True)
 def chat(
     payload: ChatRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_session),
+    db_conn = Depends(get_psycopg_conn),
     embedder: EmbeddingEngineBase = Depends(get_embedding_engine),
     store: VectorStoreBase = Depends(get_vector_store),
     llm: LLMClientBase = Depends(get_llm_client),
 ):
     try:
+        session_uuid = uuid.UUID(payload.session_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid session_id format")
+
+    session = db.query(ChatSession).filter(
+        ChatSession.id == session_uuid,
+        ChatSession.user_id == current_user.id
+    ).first()
+
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    # Update session title dynamically on the first query
+    if not session.title or session.title == "Untitled Session":
+        session.title = payload.query[:40] + ("..." if len(payload.query) > 40 else "")
+        db.add(session)
+        db.commit()
+
+    # Initialize LangChain history
+    history = PostgresChatMessageHistory(
+        "message_store",
+        str(payload.session_id),
+        sync_connection=db_conn
+    )
+
+    # Fetch and trim history (last 4 messages starting with human query)
+    past_messages = history.messages
+    trimmed = past_messages[-4:]
+    if trimmed and getattr(trimmed[0], "type", "") != "human":
+        trimmed = trimmed[1:]
+
+    formatted_history = "\n".join([
+        f"User: {m.content}" if getattr(m, "type", "") == "human" else f"Assistant: {m.content}"
+        for m in trimmed
+    ])
+
+    try:
         direct_answer = small_talk_answer(payload.query)
         if direct_answer:
+            grounding = grounding_status([], payload.require_citations, [], False)
+            history.add_message(HumanMessage(content=payload.query))
+            history.add_message(AIMessage(
+                content=direct_answer,
+                additional_kwargs={
+                    "sources": [],
+                    "grounding": grounding
+                }
+            ))
             return ChatResponse(
                 query=payload.query,
                 group_id=payload.group_id,
                 answer=direct_answer,
                 sources=[],
-                grounding=grounding_status([], payload.require_citations, [], False),
+                grounding=grounding,
             )
 
         query_vector = embedder.embed_text(payload.query)
@@ -443,6 +645,7 @@ def chat(
             payload.query,
             context,
             require_citations=payload.require_citations,
+            history=formatted_history
         )
         answer = llm_result["answer"]
         citations = llm_result["citations"]
@@ -470,6 +673,16 @@ def chat(
                 citations,
                 insufficient,
             )
+
+        # Save conversation turn to database history
+        history.add_message(HumanMessage(content=payload.query))
+        history.add_message(AIMessage(
+            content=answer,
+            additional_kwargs={
+                "sources": [s.model_dump() for s in sources],
+                "grounding": grounding
+            }
+        ))
     except Exception as e:
         raise HTTPException(500, f"Chat query failed: {e}")
 

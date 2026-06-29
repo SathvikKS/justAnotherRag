@@ -27,6 +27,8 @@ class Settings(BaseSettings):
     aws_session_token: str | None = None
     aws_region: str | None = None
     aws_endpoint_url: str | None = None
+    database_url: str = "postgresql+psycopg://postgres:postgres@localhost:5432/postgres"
+    secret_key: str = "your-super-secret-key-change-this-in-prod"
 
     model_config = SettingsConfigDict(extra="ignore")
 

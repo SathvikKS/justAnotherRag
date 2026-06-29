@@ -11,3 +11,4 @@ rag-web/node_modules/
 rag-web/dist/
 rag-web/vite-dev.*
 model_cache/
+*.db

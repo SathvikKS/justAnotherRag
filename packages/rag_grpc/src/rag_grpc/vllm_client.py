@@ -27,6 +27,7 @@ class MockLlmGrpcClient:
         prompt: str,
         context: list[str],
         require_citations: bool = False,
+        history: str = "",
     ) -> dict:
         import json
 
@@ -36,6 +37,7 @@ class MockLlmGrpcClient:
             "prompt": prompt,
             "context": context,
             "require_citations": require_citations,
+            "history": history,
         }
         with grpc.insecure_channel(self.target) as channel:
             call = channel.unary_unary(
@@ -79,6 +81,7 @@ class VllmGrpcClient:
         prompt: str,
         context: list[str],
         require_citations: bool = False,
+        history: str = "",
     ) -> str:
         if context:
             context_text = "\n\n".join(
@@ -87,9 +90,12 @@ class VllmGrpcClient:
         else:
             context_text = "No retrieved context was provided."
 
+        history_text = f"\n\nConversation History:\n{history}\n" if history else ""
+
         user_content = (
             "Context:\n"
             f"{context_text}\n\n"
+            f"{history_text}"
             "User request:\n"
             f"{prompt}\n\n"
             "Answer:"
@@ -149,12 +155,13 @@ class VllmGrpcClient:
         prompt: str,
         context: list[str],
         require_citations: bool = False,
+        history: str = "",
     ) -> dict:
         import grpc
 
         from rag_grpc.vllm_proto import vllm_engine_pb2, vllm_engine_pb2_grpc
 
-        prompt_text = self._render_prompt(prompt, context, require_citations)
+        prompt_text = self._render_prompt(prompt, context, require_citations, history)
         request = vllm_engine_pb2.GenerateRequest(
             request_id="rag-chat",
             text=prompt_text,

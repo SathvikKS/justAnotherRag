@@ -16,6 +16,19 @@ settings = get_settings()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Create SQLModel tables (users, chat_sessions)
+    from sqlmodel import SQLModel
+    from rag_api.database import engine
+    import rag_api.models  # load models to register them
+    SQLModel.metadata.create_all(engine)
+
+    # Create message store table for langchain
+    from langchain_postgres import PostgresChatMessageHistory
+    import psycopg
+    conn_url = settings.database_url.replace("postgresql+psycopg://", "postgresql://")
+    with psycopg.connect(conn_url) as conn:
+        PostgresChatMessageHistory.create_tables(conn, "message_store")
+
     async with mcp.session_manager.run():
         yield
 

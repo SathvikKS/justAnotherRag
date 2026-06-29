@@ -1,4 +1,5 @@
 import pytest
+import uuid
 from fastapi.testclient import TestClient
 
 import rag_api.app as app_module
@@ -6,6 +7,93 @@ from rag_api.dependencies import get_embedding_engine, get_llm_client, get_vecto
 from rag_api.app import app
 
 client = TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def mock_db_and_auth(monkeypatch):
+    from sqlmodel import SQLModel, create_engine, Session
+    from rag_api.auth import get_current_user
+    from rag_api.database import get_session, get_psycopg_conn
+    from rag_api.models import User, ChatSession
+    from unittest.mock import MagicMock
+
+    import os
+    db_file = "test.db"
+    if os.path.exists(db_file):
+        try:
+            os.remove(db_file)
+        except OSError:
+            pass
+
+    engine = create_engine(
+        f"sqlite:///{db_file}",
+        connect_args={"check_same_thread": False}
+    )
+    SQLModel.metadata.create_all(engine)
+
+    session = Session(engine)
+    try:
+        session.query(ChatSession).delete()
+        session.query(User).delete()
+        session.commit()
+    except Exception:
+        session.rollback()
+
+    user = User(username="testuser", password_hash="hashed_pw")
+    session.add(user)
+    session.commit()
+    session.refresh(user)
+
+    chat_session = ChatSession(
+        id=uuid.UUID("11111111-1111-1111-1111-111111111111"),
+        user_id=user.id,
+        title="Test Session",
+    )
+    session.add(chat_session)
+    session.commit()
+    session.close()
+
+    def override_get_session():
+        with Session(engine) as s:
+            yield s
+
+    from fastapi import Depends
+    app.dependency_overrides[get_session] = override_get_session
+    app.dependency_overrides[get_current_user] = lambda db=Depends(get_session): db.query(User).first()
+    app.dependency_overrides[get_psycopg_conn] = lambda: MagicMock()
+
+    class FakeChatMessageHistory:
+        def __init__(self, table_name, session_id, sync_connection=None):
+            self.messages = []
+
+        def add_message(self, message):
+            self.messages.append(message)
+
+        def add_user_message(self, message):
+            from langchain_core.messages import HumanMessage
+            self.messages.append(HumanMessage(content=message))
+
+        def add_ai_message(self, message):
+            from langchain_core.messages import AIMessage
+            self.messages.append(AIMessage(content=message))
+
+    monkeypatch.setattr(
+        "rag_api.routes.PostgresChatMessageHistory",
+        FakeChatMessageHistory,
+    )
+
+    yield
+
+    app.dependency_overrides.pop(get_session, None)
+    app.dependency_overrides.pop(get_current_user, None)
+    app.dependency_overrides.pop(get_psycopg_conn, None)
+
+    import os
+    if os.path.exists("test.db"):
+        try:
+            os.remove("test.db")
+        except OSError:
+            pass
 
 
 @pytest.fixture(autouse=True)
@@ -65,7 +153,7 @@ def fake_chat_dependencies():
             return 1
 
     class FakeLLM:
-        def generate_response(self, prompt, context, require_citations=False):
+        def generate_response(self, prompt, context, require_citations=False, history=""):
             assert prompt == "test query"
             assert context == ["doc.pdf p.1\nmatched text"]
             assert require_citations is False
@@ -297,7 +385,7 @@ class TestChat:
 
     def test_required_citations_rejects_uncited_answer(self):
         class FakeLLM:
-            def generate_response(self, prompt, context, require_citations=False):
+            def generate_response(self, prompt, context, require_citations=False, history=""):
                 assert require_citations is True
                 return {
                     "answer": "generated answer without citations",
@@ -323,7 +411,7 @@ class TestChat:
 
     def test_required_citations_accepts_valid_citations(self):
         class FakeLLM:
-            def generate_response(self, prompt, context, require_citations=False):
+            def generate_response(self, prompt, context, require_citations=False, history=""):
                 assert require_citations is True
                 return {
                     "answer": "The answer is supported by the document.",

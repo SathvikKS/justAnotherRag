@@ -1,5 +1,14 @@
 import * as React from "react"
 import {
+  createRootRouteWithContext,
+  createRoute,
+  createRouter,
+  RouterProvider,
+  redirect,
+  Outlet,
+  useNavigate,
+} from "@tanstack/react-router"
+import {
   CheckCircle2,
   Database,
   FileText,
@@ -11,6 +20,11 @@ import {
   TriangleAlert,
   Upload,
   XCircle,
+  Plus,
+  LogOut,
+  MessageSquare,
+  User,
+  Lock,
 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
@@ -175,7 +189,13 @@ function highlightMatches(text: string, positions: number[][]): React.ReactNode 
   return <>{parts}</>
 }
 
-export function App() {
+export function AppDashboard() {
+  const { auth } = rootRoute.useRouteContext()
+  const { token, username, logout: handleLogout } = auth
+  const [sessions, setSessions] = React.useState<Array<{ id: string; title: string; created_at: string }>>([])
+  const [currentSessionId, setCurrentSessionId] = React.useState<string | null>(null)
+  const [sessionsLoading, setSessionsLoading] = React.useState(false)
+
   const [groupId, setGroupId] = React.useState("demo")
   const [file, setFile] = React.useState<File | null>(null)
   const [taskId, setTaskId] = React.useState<string | null>(null)
@@ -199,6 +219,117 @@ export function App() {
   const [managementError, setManagementError] = React.useState<string | null>(null)
   const [isRefreshingGroup, setIsRefreshingGroup] = React.useState(false)
   const [deleteTarget, setDeleteTarget] = React.useState<{ kind: "file"; fileSummary: FileSummary } | { kind: "group" } | null>(null)
+
+  // Fetch user's chat sessions
+  const fetchSessions = React.useCallback(async (selectedId?: string) => {
+    if (!token) return
+    setSessionsLoading(true)
+    try {
+      const res = await fetch(`${API_BASE_URL}/chat/sessions`, {
+        headers: { "Authorization": `Bearer ${token}` }
+      })
+      if (!res.ok) throw new Error(await readError(res))
+      const data = await res.json()
+      setSessions(data)
+      
+      // Select session logic
+      if (data.length > 0) {
+        if (selectedId && data.some((s: any) => s.id === selectedId)) {
+          setCurrentSessionId(selectedId)
+        } else if (!currentSessionId || !data.some((s: any) => s.id === currentSessionId)) {
+          setCurrentSessionId(data[0].id)
+        }
+      } else {
+        // No sessions exist, create one!
+        await createSession("New Conversation")
+      }
+    } catch (err) {
+      console.error("Failed to load sessions:", err)
+    } finally {
+      setSessionsLoading(false)
+    }
+  }, [token, currentSessionId])
+
+  // Create new session
+  const createSession = async (title?: string) => {
+    if (!token) return
+    try {
+      const res = await fetch(`${API_BASE_URL}/chat/sessions`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
+        body: JSON.stringify({ title: title || "New Chat" })
+      })
+      if (!res.ok) throw new Error(await readError(res))
+      const data = await res.json()
+      setSessions(current => [data, ...current])
+      setCurrentSessionId(data.id)
+      setMessages([])
+      return data.id
+    } catch (err) {
+      console.error("Failed to create session:", err)
+    }
+  }
+
+  // Delete chat session
+  const deleteSession = async (sid: string, e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (!token) return
+    try {
+      const res = await fetch(`${API_BASE_URL}/chat/sessions/${sid}`, {
+        method: "DELETE",
+        headers: { "Authorization": `Bearer ${token}` }
+      })
+      if (!res.ok) throw new Error(await readError(res))
+      
+      const remaining = sessions.filter(s => s.id !== sid)
+      setSessions(remaining)
+      if (currentSessionId === sid) {
+        if (remaining.length > 0) {
+          setCurrentSessionId(remaining[0].id)
+        } else {
+          setCurrentSessionId(null)
+          setMessages([])
+          await createSession("New Conversation")
+        }
+      }
+    } catch (err) {
+      console.error("Failed to delete session:", err)
+    }
+  }
+
+  // Load messages for current session
+  const loadMessages = React.useCallback(async (sid: string) => {
+    if (!token) return
+    try {
+      const res = await fetch(`${API_BASE_URL}/chat/sessions/${sid}/messages`, {
+        headers: { "Authorization": `Bearer ${token}` }
+      })
+      if (!res.ok) throw new Error(await readError(res))
+      const data = await res.json()
+      setMessages(data)
+    } catch (err) {
+      console.error("Failed to load messages:", err)
+    }
+  }, [token])
+
+  // Trigger loading of messages when session changes
+  React.useEffect(() => {
+    if (currentSessionId) {
+      void loadMessages(currentSessionId)
+    }
+  }, [currentSessionId, loadMessages])
+
+  // Fetch sessions on login / load
+  React.useEffect(() => {
+    if (token) {
+      void fetchSessions()
+    }
+  }, [token])
+
+
 
   const refreshGroup = React.useCallback(async function refreshGroup() {
     const cleanGroupId = groupId.trim()
@@ -462,7 +593,14 @@ export function App() {
       return
     }
 
+    let activeSessionId = currentSessionId
     if (queryMode === "chat") {
+      if (!activeSessionId) {
+        setChatError("No active chat session. Creating one...")
+        activeSessionId = await createSession(cleanQuery.slice(0, 30))
+        if (!activeSessionId) return
+      }
+
       const userMessage: ChatMessage = {
         id: makeId(),
         role: "user",
@@ -480,7 +618,10 @@ export function App() {
       if (queryMode === "search") {
         const response = await fetch(`${API_BASE_URL}/debug/search`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { 
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${token}`
+          },
           body: JSON.stringify({
             query: cleanQuery,
             group_id: cleanGroupId,
@@ -499,12 +640,16 @@ export function App() {
 
       const response = await fetch(`${API_BASE_URL}/chat`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { 
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
         body: JSON.stringify({
           query: cleanQuery,
           group_id: cleanGroupId,
           limit: sourceLimit,
           require_citations: requireCitations,
+          session_id: activeSessionId,
         }),
       })
       if (!response.ok) {
@@ -522,6 +667,10 @@ export function App() {
           grounding: body.grounding,
         },
       ])
+
+      if (activeSessionId) {
+        void fetchSessions(activeSessionId)
+      }
     } catch (error) {
       setChatError(error instanceof Error ? error.message : String(error))
     } finally {
@@ -543,7 +692,75 @@ export function App() {
 
   return (
     <main className="h-svh bg-background text-foreground">
-      <div className="mx-auto grid h-svh w-full max-w-7xl gap-4 p-4 lg:grid-cols-[360px_1fr] lg:p-6">
+      <div className="mx-auto grid h-svh w-full max-w-7xl gap-4 p-4 lg:grid-cols-[260px_320px_1fr] lg:p-6">
+        {/* Column 1: Conversations */}
+        <section className="flex min-w-0 flex-col gap-4 overflow-y-auto rounded-md border bg-card p-4 shadow-sm">
+          <div className="flex items-center justify-between border-b pb-3">
+            <h2 className="font-semibold text-lg">Conversations</h2>
+            <Button
+              size="icon"
+              variant="outline"
+              onClick={() => void createSession("New Chat")}
+              title="New Chat"
+              className="size-8"
+            >
+              <Plus className="size-4" />
+            </Button>
+          </div>
+          
+          <ScrollArea className="flex-1 -mx-2 px-2">
+            <div className="flex flex-col gap-1 py-1">
+              {sessionsLoading && sessions.length === 0 ? (
+                <div className="flex justify-center p-4">
+                  <Loader2 className="size-4 animate-spin text-muted-foreground" />
+                </div>
+              ) : sessions.length === 0 ? (
+                <p className="text-xs text-muted-foreground text-center py-4">No conversations yet.</p>
+              ) : (
+                sessions.map(s => (
+                  <button
+                    key={s.id}
+                    onClick={() => setCurrentSessionId(s.id)}
+                    className={`flex items-center justify-between group rounded-md px-3 py-2 text-xs text-left transition ${currentSessionId === s.id ? "bg-primary text-primary-foreground font-medium" : "hover:bg-muted text-foreground"}`}
+                  >
+                    <div className="flex items-center gap-2 min-w-0 flex-1 mr-2">
+                      <MessageSquare className="size-3.5 shrink-0 opacity-70" />
+                      <span className="truncate">{s.title}</span>
+                    </div>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      type="button"
+                      onClick={(e) => void deleteSession(s.id, e)}
+                      className="size-5 p-0 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity hover:bg-destructive hover:text-destructive-foreground"
+                    >
+                      <Trash2 className="size-3" />
+                      <span className="sr-only">Delete</span>
+                    </Button>
+                  </button>
+                ))
+              )}
+            </div>
+          </ScrollArea>
+
+          <div className="mt-auto border-t pt-3 flex flex-col gap-2">
+            <div className="flex items-center gap-2 px-2 py-1 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+              <User className="size-3.5" />
+              <span className="truncate">{username}</span>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleLogout}
+              className="w-full flex items-center justify-center gap-1.5 h-8 text-xs font-semibold"
+            >
+              <LogOut className="size-3.5" />
+              Logout
+            </Button>
+          </div>
+        </section>
+
+        {/* Column 2: Document Indexer */}
         <section className="flex min-w-0 flex-col gap-4 overflow-y-auto rounded-md border bg-card p-4 shadow-sm">
           <div className="min-w-0">
             <h1 className="text-xl font-semibold tracking-normal">Local RAG</h1>
@@ -1063,6 +1280,236 @@ export function App() {
         </DialogContent>
       </Dialog>
     </main>
+  )
+}
+
+interface MyRouterContext {
+  auth: {
+    token: string | null
+    username: string | null
+    login: (token: string, username: string) => void
+    logout: () => void
+  }
+}
+
+const rootRoute = createRootRouteWithContext<MyRouterContext>()({
+  component: () => (
+    <Outlet />
+  ),
+})
+
+const authenticatedRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  id: "authenticated",
+  beforeLoad: ({ context }) => {
+    if (!context.auth.token) {
+      throw redirect({
+        to: "/login",
+      })
+    }
+  },
+  component: () => <Outlet />,
+})
+
+const indexRoute = createRoute({
+  getParentRoute: () => authenticatedRoute,
+  path: "/",
+  component: AppDashboard,
+})
+
+const loginRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/login",
+  beforeLoad: ({ context }) => {
+    if (context.auth.token) {
+      throw redirect({
+        to: "/",
+      })
+    }
+  },
+  component: LoginPage,
+})
+
+const routeTree = rootRoute.addChildren([
+  authenticatedRoute.addChildren([indexRoute]),
+  loginRoute,
+])
+
+const router = createRouter({
+  routeTree,
+  context: {
+    auth: undefined!,
+  },
+})
+
+declare module "@tanstack/react-router" {
+  interface Register {
+    router: typeof router
+  }
+}
+
+function LoginPage() {
+  const { auth } = rootRoute.useRouteContext()
+  const [authUsername, setAuthUsername] = React.useState("")
+  const [authPassword, setAuthPassword] = React.useState("")
+  const [authLoading, setAuthLoading] = React.useState(false)
+  const [authError, setAuthError] = React.useState<string | null>(null)
+  const [authMode, setAuthMode] = React.useState<"login" | "register">("login")
+  const navigate = useNavigate()
+
+  const handleAuthSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setAuthError(null)
+    if (!authUsername.trim() || !authPassword.trim()) {
+      setAuthError("All fields are required")
+      return
+    }
+    setAuthLoading(true)
+    try {
+      if (authMode === "register") {
+        const res = await fetch(`${API_BASE_URL}/auth/register`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ username: authUsername.trim(), password: authPassword.trim() })
+        })
+        if (!res.ok) throw new Error(await readError(res))
+      }
+
+      const params = new URLSearchParams()
+      params.append("username", authUsername.trim())
+      params.append("password", authPassword.trim())
+      
+      const res = await fetch(`${API_BASE_URL}/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: params
+      })
+      if (!res.ok) throw new Error(await readError(res))
+      
+      const data = await res.json()
+      auth.login(data.access_token, data.username)
+      void navigate({ to: "/" })
+    } catch (err) {
+      setAuthError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setAuthLoading(false)
+    }
+  }
+
+  return (
+    <main className="flex h-svh w-screen items-center justify-center bg-zinc-950 text-foreground font-sans">
+      <div className="w-full max-w-md rounded-xl border border-zinc-800 bg-zinc-900/50 p-8 shadow-2xl backdrop-blur-md">
+        <div className="flex flex-col items-center gap-2 text-center mb-8">
+          <div className="flex size-12 items-center justify-center rounded-full bg-primary/10 text-primary">
+            <Lock className="size-6" />
+          </div>
+          <h1 className="text-2xl font-bold tracking-tight">Local RAG Auth</h1>
+          <p className="text-sm text-muted-foreground">
+            Sign in or create a new account to continue
+          </p>
+        </div>
+
+        <form onSubmit={handleAuthSubmit} className="flex flex-col gap-4">
+          <div className="flex rounded-lg border border-zinc-800 bg-zinc-950 p-1">
+            <button
+              type="button"
+              className={`flex-1 rounded-md py-2 text-sm font-semibold transition ${authMode === "login" ? "bg-zinc-800 text-foreground" : "text-muted-foreground hover:text-foreground"}`}
+              onClick={() => {
+                setAuthMode("login")
+                setAuthError(null)
+              }}
+            >
+              Sign In
+            </button>
+            <button
+              type="button"
+              className={`flex-1 rounded-md py-2 text-sm font-semibold transition ${authMode === "register" ? "bg-zinc-800 text-foreground" : "text-muted-foreground hover:text-foreground"}`}
+              onClick={() => {
+                setAuthMode("register")
+                setAuthError(null)
+              }}
+            >
+              Sign Up
+            </button>
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Username</label>
+            <div className="relative">
+              <input
+                type="text"
+                required
+                placeholder="enter username"
+                value={authUsername}
+                onChange={(e) => setAuthUsername(e.target.value)}
+                className="h-10 w-full rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm outline-none transition focus:border-zinc-700"
+              />
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Password</label>
+            <div className="relative">
+              <input
+                type="password"
+                required
+                placeholder="enter password"
+                value={authPassword}
+                onChange={(e) => setAuthPassword(e.target.value)}
+                className="h-10 w-full rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm outline-none transition focus:border-zinc-700"
+              />
+            </div>
+          </div>
+
+          {authError ? (
+            <div className="flex items-center gap-2 rounded-md border border-destructive/20 bg-destructive/10 p-3 text-sm text-destructive font-medium">
+              <TriangleAlert className="size-4 shrink-0" />
+              <span>{authError}</span>
+            </div>
+          ) : null}
+
+          <Button type="submit" disabled={authLoading} className="h-10 font-semibold w-full mt-2">
+            {authLoading ? (
+              <Loader2 className="size-4 animate-spin mr-2" />
+            ) : null}
+            {authMode === "login" ? "Sign In" : "Sign Up"}
+          </Button>
+        </form>
+      </div>
+    </main>
+  )
+}
+
+export function App() {
+  const [token, setToken] = React.useState<string | null>(() => localStorage.getItem("token"))
+  const [username, setUsername] = React.useState<string | null>(() => localStorage.getItem("username"))
+
+  const login = (newToken: string, newUsername: string) => {
+    localStorage.setItem("token", newToken)
+    localStorage.setItem("username", newUsername)
+    setToken(newToken)
+    setUsername(newUsername)
+  }
+
+  const logout = () => {
+    localStorage.removeItem("token")
+    localStorage.removeItem("username")
+    setToken(null)
+    setUsername(null)
+  }
+
+  return (
+    <RouterProvider
+      router={router}
+      context={{
+        auth: {
+          token,
+          username,
+          login,
+          logout,
+        },
+      }}
+    />
   )
 }
 
