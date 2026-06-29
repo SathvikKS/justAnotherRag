@@ -11,6 +11,7 @@ import {
 } from "lucide-react"
 
 import { GroupField } from "@/components/shared/group-field"
+import { IndexedFilesTableSkeleton } from "@/components/shared/loading-skeletons"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -45,7 +46,7 @@ import {
 } from "@/components/ui/tooltip"
 import { API_BASE_URL, DONE_STATES, GROUP_ID_REGEX, readError } from "@/lib/api"
 import { formatBytes } from "@/lib/format"
-import { showErrorToast, showSuccessToast } from "@/lib/toast"
+import { showErrorToast, showInfoToast, showSuccessToast } from "@/lib/toast"
 import type { FileSummary, GroupSummary, TaskStatus } from "@/lib/types"
 
 export function UploadSection() {
@@ -343,7 +344,11 @@ export function UploadSection() {
                 <Database className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
                 Indexed files
               </CardTitle>
-              {groupSummary ? (
+              {isRefreshingGroup && !groupSummary ? (
+                <CardDescription aria-hidden="true">
+                  <Skeleton className="h-4 w-44" />
+                </CardDescription>
+              ) : groupSummary ? (
                 <CardDescription>
                   {groupSummary.files} files, {groupSummary.chunks} chunks
                 </CardDescription>
@@ -373,11 +378,7 @@ export function UploadSection() {
           </CardHeader>
           <CardContent className="flex min-h-0 flex-1 flex-col gap-4">
             {isRefreshingGroup && indexedFiles.length === 0 ? (
-              <div className="flex flex-col gap-2">
-                <Skeleton className="h-10 w-full" />
-                <Skeleton className="h-10 w-full" />
-                <Skeleton className="h-10 w-3/4" />
-              </div>
+              <IndexedFilesTableSkeleton rows={4} />
             ) : indexedFiles.length === 0 ? (
               <div className="flex flex-col items-center justify-center gap-3 py-12 text-center">
                 <FileText className="size-8 text-muted-foreground" aria-hidden="true" />

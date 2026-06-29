@@ -413,6 +413,7 @@ if (isError) return <ErrorState message="Failed to load cameras." onRetry={refet
 - Use `<Skeleton>` from `src/components/ui/skeleton.tsx` for initial page/section loads.
 - Use an inline spinner icon (`<LoaderCircle className="h-4 w-4 animate-spin" />`) only for button loading states.
 - Never leave a blank white/dark area while loading — always show a skeleton.
+- Ensure the skeleton matches the size of the actual element to prevent dimension change / jump when the skeleton is later replaced with the real data
 
 ```tsx
 import { Skeleton } from "@/components/ui/skeleton";

@@ -21,7 +21,7 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet"
-import { Skeleton } from "@/components/ui/skeleton"
+import { ConversationListSkeleton } from "@/components/shared/loading-skeletons"
 import { Slider } from "@/components/ui/slider"
 import { Switch } from "@/components/ui/switch"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -372,10 +372,7 @@ export function ChatSection({ token }: ChatSectionProps) {
         <ScrollArea className="max-h-48 lg:max-h-none lg:flex-1">
           <div className="flex flex-col gap-1">
             {sessionsLoading && sessions.length === 0 ? (
-              <div className="flex flex-col gap-2 p-2">
-                <Skeleton className="h-8 w-full" />
-                <Skeleton className="h-8 w-full" />
-              </div>
+              <ConversationListSkeleton count={3} />
             ) : sessions.length === 0 ? (
               <p className="py-4 text-center text-xs text-muted-foreground">No conversations yet.</p>
             ) : (
