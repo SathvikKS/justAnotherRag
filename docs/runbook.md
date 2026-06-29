@@ -38,6 +38,8 @@ VLLM_GPU_MEMORY_UTIL=0.88
 CELERY_BROKER_URL=redis://localhost:6379/0
 CELERY_RESULT_BACKEND=redis://localhost:6379/0
 API_KEY=dev-api-key
+DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:5432/postgres
+SECRET_KEY=your-super-secret-key-change-this-in-prod
 
 # Model Cache Paths (Local Dev)
 HF_HOME=../model_cache/huggingface
@@ -190,10 +192,24 @@ Poll:
 curl http://localhost:8000/status/<task_id>
 ```
 
+Register:
+
+```powershell
+curl -X POST http://localhost:8000/auth/register -H "Content-Type: application/json" -d "{\"username\":\"john\",\"password\":\"password123\"}"
+```
+
+Login:
+
+```powershell
+curl -X POST http://localhost:8000/auth/login -H "Content-Type: application/x-www-form-urlencoded" -d "username=john&password=password123"
+```
+
+Response contains the JWT `access_token`.
+
 Chat:
 
 ```powershell
-curl -X POST http://localhost:8000/chat -H "Content-Type: application/json" -d "{\"query\":\"What is this document about?\",\"group_id\":\"demo\",\"limit\":5}"
+curl -X POST http://localhost:8000/chat -H "Content-Type: application/json" -H "Authorization: Bearer <access_token>" -d "{\"query\":\"What is this document about?\",\"group_id\":\"demo\",\"limit\":5,\"session_id\":\"<session_uuid>\"}"
 ```
 
 Response has `answer` and `sources`.

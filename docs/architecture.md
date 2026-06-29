@@ -30,14 +30,17 @@ The ingestion parser is cached once per worker process, so Docling tokenizer/OCR
 
 Chat:
 
-1. `POST /chat` validates `query`, `group_id`, and `limit`.
-2. API bypasses retrieval for simple greetings and returns a direct response with no sources.
-3. API embeds document questions through `embedding_service`.
-4. API searches LanceDB through `LanceDBStore`.
-5. API sends the query and labelled retrieved source text to `llm_service`.
-6. `VllmGrpcClient` wraps the request in a document-QA system/user message and renders it with the tokenizer chat template when available.
-7. The `VllmGrpcClient` uses vLLM's guided decoding (`json_schema`) to force the LLM to output a structured JSON response containing the user-facing `answer`, a `citations` array, and an `insufficient` boolean. The API uses this structured metadata to record whether valid citations were found or if the context was insufficient. If `require_citations` is true for the request, the API rejects uncited or insufficient document answers with an insufficient-context response while preserving the raw uncited answer in `grounding.raw_answer` for debugging. When false, uncited answers are labelled but not rejected.
-8. API returns `query`, `group_id`, `answer`, `sources`, and `grounding` metadata.
+1. `POST /chat` validates `query`, `group_id`, `session_id`, and `limit`. It requires a Bearer JWT Token in the `Authorization` header, resolving the `current_user` from the SQLModel database.
+2. API validates that the `session_id` exists and belongs to the authenticated user.
+3. API retrieves conversation history for the session using `PostgresChatMessageHistory` (stored in the `message_store` table in PostgreSQL), formatting it into the LLM prompt.
+4. API bypasses retrieval for simple greetings and returns a direct response with no sources.
+5. API embeds document questions through `embedding_service`.
+6. API searches LanceDB through `LanceDBStore`.
+7. API sends the query, conversation history, and labelled retrieved source text to `llm_service`.
+8. `VllmGrpcClient` wraps the request in a document-QA system/user message, appending history, and renders it with the tokenizer chat template when available.
+9. The `VllmGrpcClient` uses vLLM's guided decoding (`json_schema`) to force the LLM to output a structured JSON response containing the user-facing `answer`, a `citations` array, and an `insufficient` boolean. The API uses this structured metadata to record whether valid citations were found or if the context was insufficient. If `require_citations` is true for the request, the API rejects uncited or insufficient document answers with an insufficient-context response while preserving the raw uncited answer in `grounding.raw_answer` for debugging. When false, uncited answers are labelled but not rejected.
+10. The AI response and user query are saved to `PostgresChatMessageHistory`. Grounding data and sources are serialized inside the message's `additional_kwargs` to allow full citation reload during session navigation.
+11. API returns `query`, `group_id`, `answer`, `sources`, and `grounding` metadata.
 
 MCP:
 
@@ -60,6 +63,7 @@ Management:
 
 - API does not import SentenceTransformers, Torch, or vLLM.
 - MCP auth is API-key based only, read from `API_KEY`, with no user model or per-client identity.
+- Web Auth uses JWT Bearer Tokens, storing credentials and user/session objects in PostgreSQL using SQLModel.
 - MCP tools live in `mcp_server.py`, share `dependencies.py` and shared ingestion helpers, and never call REST route handlers.
 - Ingestion keeps parsing behind `DocumentParserBase` and currently uses Docling via LangChain.
 - Embedding service owns the LangChain embedding wrapper and the 384-dimension guard.

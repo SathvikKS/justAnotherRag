@@ -21,7 +21,9 @@ The Python side is a uv workspace with separate root services:
 - Store chunks in LanceDB with 384-dimensional vectors.
 - Search LanceDB with hybrid vector plus text search, filtered by `group_id`.
 - Generate `/chat` answers through `llm_service` with a structured RAG prompt and tokenizer-native chat template rendering.
-- Query from the web client in either `Ask AI` mode or direct `Search Vector DB` mode.
+- Register user accounts, log in via JWT bearer tokens, and isolate stateful chat sessions.
+- Persist chat session histories with grounding citations using LangChain Postgres memory.
+- Query from the web client using a TanStack Router guarded interface in either `Ask AI` mode or direct `Search Vector DB` mode.
 - Bypass retrieval for simple greetings and return no sources.
 - List and permanently delete indexed files or whole groups without deleting the LanceDB directory.
 - Run GPU-first Docker Compose, or add the CPU override.
@@ -50,6 +52,8 @@ VLLM_GPU_MEMORY_UTIL=0.88
 CELERY_BROKER_URL=redis://localhost:6379/0
 CELERY_RESULT_BACKEND=redis://localhost:6379/0
 API_KEY=dev-api-key
+DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:5432/postgres
+SECRET_KEY=your-super-secret-key-change-this-in-prod
 
 # Model Cache Paths (Local Dev)
 HF_HOME=../model_cache/huggingface
