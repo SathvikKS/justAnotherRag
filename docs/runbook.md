@@ -180,7 +180,7 @@ rag_ingestion.tasks.process_document_task
 
 ## Upload And Chat
 
-Upload:
+Upload (Note: maximum file size is 50MB; larger uploads will return a `400 Bad Request` error with message `File size exceeds 50MB limit.`):
 
 ```powershell
 curl -X POST http://localhost:8000/upload -F "file=@doc.pdf" -F "group_id=demo"

@@ -19,12 +19,18 @@ Root `pyproject.toml` is a uv workspace for the service apps and shared packages
 
 Upload:
 
-1. `POST /upload` validates the PDF filename and `group_id`.
-2. API sends Celery task `rag_ingestion.tasks.process_document_task`.
-3. `ingestion_worker` parses PDF bytes with a Docling-backed `DocumentParserBase` implementation configured through Docling OCR settings.
-4. Worker sends Docling chunk texts to `embedding_service` (batched in chunks of 128 to prevent gRPC message size limit exhaustion).
-5. Worker writes chunk records to LanceDB with a per-upload `file_id`, chunk index, creation timestamp, and text-quality marker.
-6. `/status/{task_id}` reads Celery result state.
+1. Client-Side Concurrency Queue:
+   - Client manages selected PDFs using a concurrent upload queue with a maximum limit of 5 parallel active uploads.
+   - Files exceeding 50MB are rejected at selection time with a validation toast.
+   - The queue displays dynamic status counts (e.g., `2 uploading · 1 indexing · 5 pending`).
+   - Active uploads render visual progress percentages computed via XHR `onprogress`.
+   - Completed files are automatically promoted to the indexed file list and removed from the active queue.
+2. `POST /upload` validates the PDF filename, `group_id`, and verifies that the file size is under 50MB (52,428,800 bytes).
+3. API sends Celery task `rag_ingestion.tasks.process_document_task`.
+4. `ingestion_worker` parses PDF bytes with a Docling-backed `DocumentParserBase` implementation configured through Docling OCR settings.
+5. Worker sends Docling chunk texts to `embedding_service` (batched in chunks of 128 to prevent gRPC message size limit exhaustion).
+6. Worker writes chunk records to LanceDB with a per-upload `file_id`, chunk index, creation timestamp, and text-quality marker.
+7. `/status/{task_id}` reads Celery result state.
 
 The ingestion parser is cached once per worker process, so Docling tokenizer/OCR/model state is process-local rather than shared across Celery workers. When `DOCLING_WARMUP_ENABLED=true`, the worker also performs a startup warmup conversion using a tiny synthetic PDF so the first real upload does not pay all initialization costs.
 
