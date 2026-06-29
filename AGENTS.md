@@ -63,3 +63,9 @@ Agents must keep project documentation current as part of any code or architectu
 - If a future agent would need to rediscover a fact, document it.
 
 <!-- internal-docs:end -->
+
+<!-- design-standards:start -->
+# Design Standards
+
+When working on any UI code (components, pages, styles, layouts), **MUST first read `DESIGN.md`** at the project root. It is the single source of truth for UI decisions.
+<!-- design-standards:end -->
