@@ -109,10 +109,12 @@ VLLM_TARGET_DEVICE=cpu uv sync --extra cpu --torch-backend cpu
 uv run python -m rag_llm.serve
 ```
 
-The `llm/pyproject.toml` extras route `vllm` and `torch` to different indexes:
+The `llm/pyproject.toml` extras route `vllm` to the vLLM wheel index and route `torch`, `torchvision`, and `torchaudio` together to the matching PyTorch index:
 
 - `gpu`: `https://wheels.vllm.ai/0.23.0/cu129` and `https://download.pytorch.org/whl/cu129`
 - `cpu`: `https://wheels.vllm.ai/0.23.0/cpu` and `https://download.pytorch.org/whl/cpu`
+
+Keep those PyTorch-family packages aligned. A fresh `uv sync --reinstall` can otherwise pull a mismatched CUDA build such as `torch==...+cu129` with `torchvision` or `torchaudio` built for CUDA 13.x, which breaks vLLM startup during import.
 
 The gRPC server defaults to `Qwen/Qwen2.5-3B-Instruct`; override with `LLM_MODEL`. `VLLM_GPU_MEMORY_UTIL` defaults to `0.88` and maps to vLLM `--gpu-memory-utilization`; lower it to reduce VRAM reserved for KV cache/CUDA graph pools, or raise it only if the GPU has enough headroom.
 

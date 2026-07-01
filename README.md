@@ -136,6 +136,8 @@ LLM GPU (Linux/WSL2):
   uv run --extra gpu python -m rag_llm.serve
   ```
 
+The `llm/pyproject.toml` extras intentionally route `torch`, `torchvision`, and `torchaudio` to the same PyTorch index so fresh `uv sync --reinstall` runs do not mix CUDA 12.9 and CUDA 13.x wheels.
+
 LLM CPU (Linux/WSL2):
 
 ```bash

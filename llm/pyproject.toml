@@ -7,10 +7,14 @@ dependencies = ["vllm[grpc]"]
 [project.optional-dependencies]
 gpu = [
     "torch ; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "torchvision ; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "torchaudio ; sys_platform == 'linux' and platform_machine == 'x86_64'",
     "vllm ; sys_platform == 'linux' and platform_machine == 'x86_64'",
 ]
 cpu = [
     "torch ; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "torchvision ; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "torchaudio ; sys_platform == 'linux' and platform_machine == 'x86_64'",
     "vllm ; sys_platform == 'linux' and platform_machine == 'x86_64'",
 ]
 mock = [
@@ -35,6 +39,14 @@ vllm = [
     { index = "vllm-cu129", extra = "gpu" },
 ]
 torch = [
+    { index = "pytorch-cpu", extra = "cpu" },
+    { index = "pytorch-cu129", extra = "gpu" },
+]
+torchvision = [
+    { index = "pytorch-cpu", extra = "cpu" },
+    { index = "pytorch-cu129", extra = "gpu" },
+]
+torchaudio = [
     { index = "pytorch-cpu", extra = "cpu" },
     { index = "pytorch-cu129", extra = "gpu" },
 ]
