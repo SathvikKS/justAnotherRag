@@ -10,6 +10,8 @@
 
 ## Environment
 
+The repo root `pyproject.toml` is a shared workspace environment for Windows-friendly services (`api`, `embedding`, `ingestion`, and shared packages). It intentionally does not install `rag-llm`, because `rag-llm` depends on vLLM and Linux-only wheels. Sync and run the LLM service from `llm/` directly instead.
+
 Each service reads `.env` from its own current directory. API and ingestion also preload their service-local `.env` before importing shared settings so `LANCEDB_URI` does not fall back to package defaults. Copy each service's example when setting it up:
 
 - `api/.env.example` -> `api/.env`

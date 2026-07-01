@@ -3528,9 +3528,9 @@ version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
     { name = "rag-api" },
+    { name = "rag-embedding" },
     { name = "rag-grpc" },
     { name = "rag-ingestion" },
-    { name = "rag-llm", extra = ["mock"] },
     { name = "rag-storage" },
 ]
 
@@ -3543,9 +3543,9 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "rag-api", editable = "api" },
+    { name = "rag-embedding", editable = "embedding" },
     { name = "rag-grpc", editable = "packages/rag_grpc" },
     { name = "rag-ingestion", editable = "ingestion" },
-    { name = "rag-llm", extras = ["mock"], editable = "llm" },
     { name = "rag-storage", editable = "packages/rag_storage" },
 ]
 

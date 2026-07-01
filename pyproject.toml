@@ -4,9 +4,9 @@ version = "0.1.0"
 requires-python = ">=3.11"
 dependencies = [
     "rag-api",
+    "rag-embedding",
     "rag-grpc",
     "rag-ingestion",
-    "rag-llm[mock]",
     "rag-storage",
 ]
 
@@ -30,6 +30,7 @@ addopts = "-p no:langsmith"
 
 [tool.uv.sources]
 rag-api = { workspace = true }
+rag-embedding = { workspace = true }
 rag-grpc = { workspace = true }
 rag-ingestion = { workspace = true }
 rag-llm = { workspace = true }

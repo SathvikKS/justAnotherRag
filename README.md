@@ -11,6 +11,8 @@ The Python side is a uv workspace with separate root services:
 - `packages/`: shared config, LanceDB storage, and gRPC clients.
 - `rag-web/`: Vite React client.
 
+The root workspace environment is intentionally kept Windows-compatible for `api`, `embedding`, and `ingestion` development. The `llm/` service manages its own `uv` environment and should be synced from `llm/` directly, especially for WSL2 GPU installs.
+
 ## What Works Today
 
 - Upload PDFs and assign them to a `group_id`.
