@@ -1,3 +1,5 @@
+import uuid
+
 from rag_core.config import get_settings
 
 
@@ -163,7 +165,7 @@ class VllmGrpcClient:
 
         prompt_text = self._render_prompt(prompt, context, require_citations, history)
         request = vllm_engine_pb2.GenerateRequest(
-            request_id="rag-chat",
+            request_id=f"rag-chat-{uuid.uuid4()}",
             text=prompt_text,
             sampling_params=vllm_engine_pb2.SamplingParams(
                 max_tokens=self.max_tokens,
