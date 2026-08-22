@@ -40,6 +40,7 @@ def test_mock_llm_client_calls_mock_server():
         "answer": "Mock answer for: question?",
         "citations": [],
         "insufficient": False,
+        "metrics": None,
     }
 
 
@@ -93,6 +94,9 @@ def test_vllm_client_generates_unique_request_ids(monkeypatch):
     requests = []
 
     class FakeTokenizer:
+        def encode(self, text):
+            return [101, 102]
+
         def decode(self, token_ids, skip_special_tokens=True):
             return json.dumps(
                 {"answer": "ok", "citations": [], "insufficient": False}
@@ -160,3 +164,90 @@ def test_vllm_client_generates_unique_request_ids(monkeypatch):
     assert requests[0].request_id != requests[1].request_id
     assert requests[0].request_id.startswith("rag-chat-")
     assert requests[1].request_id.startswith("rag-chat-")
+
+
+def test_vllm_client_reports_metrics(monkeypatch):
+    class FakeTokenizer:
+        def encode(self, text):
+            assert text == "rendered prompt"
+            return [101, 102, 103, 104]
+
+        def decode(self, token_ids, skip_special_tokens=True):
+            assert token_ids == [1, 2, 3]
+            return json.dumps(
+                {"answer": "ok", "citations": [1], "insufficient": False}
+            )
+
+    class FakeGenerateRequest:
+        def __init__(self, **kwargs):
+            self.__dict__.update(kwargs)
+
+    class FakeSamplingParams:
+        def __init__(self, **kwargs):
+            self.__dict__.update(kwargs)
+
+    class FakeResponse:
+        def __init__(self):
+            self.complete = types.SimpleNamespace(output_ids=[1, 2, 3])
+
+        def HasField(self, name):
+            return name == "complete"
+
+    class FakeStub:
+        def __init__(self, channel):
+            self.channel = channel
+
+        def Generate(self, request):
+            return iter([FakeResponse()])
+
+    class FakeChannel:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    fake_grpc = types.SimpleNamespace(insecure_channel=lambda target: FakeChannel())
+    fake_pb2 = types.SimpleNamespace(
+        GenerateRequest=FakeGenerateRequest,
+        SamplingParams=FakeSamplingParams,
+    )
+    fake_pb2_grpc = types.SimpleNamespace(VllmEngineStub=FakeStub)
+
+    perf_counter_values = iter([10.0, 10.5])
+
+    monkeypatch.setitem(sys.modules, "grpc", fake_grpc)
+    monkeypatch.setitem(
+        sys.modules,
+        "rag_grpc.vllm_proto.vllm_engine_pb2",
+        fake_pb2,
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "rag_grpc.vllm_proto.vllm_engine_pb2_grpc",
+        fake_pb2_grpc,
+    )
+    monkeypatch.setattr(
+        "rag_grpc.vllm_client.time.perf_counter",
+        lambda: next(perf_counter_values),
+    )
+
+    client = VllmGrpcClient.__new__(VllmGrpcClient)
+    client.target = "127.0.0.1:50051"
+    client.max_tokens = 16
+    client._tokenizer = FakeTokenizer()
+    client._render_prompt = lambda *args: "rendered prompt"
+
+    result = client.generate_response("What?", ["context"])
+
+    assert result == {
+        "answer": "ok",
+        "citations": [1],
+        "insufficient": False,
+        "metrics": {
+            "session_tps": 6.0,
+            "prompt_tokens": 4,
+            "completion_tokens": 3,
+            "total_context_used": 7,
+        },
+    }

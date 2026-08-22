@@ -79,6 +79,7 @@ class ChatResponse(BaseModel):
     answer: str
     sources: list[Source]
     grounding: dict
+    metrics: dict | None = None
 
 
 class GroupSummary(BaseModel):
@@ -627,6 +628,7 @@ def chat(
                 answer=direct_answer,
                 sources=[],
                 grounding=grounding,
+                metrics=None,
             )
 
         query_vector = embedder.embed_text(payload.query)
@@ -652,6 +654,7 @@ def chat(
         answer = llm_result["answer"]
         citations = llm_result["citations"]
         insufficient = llm_result["insufficient"]
+        metrics = llm_result.get("metrics")
 
         # Filter valid citations
         valid_cites = sorted({
@@ -694,6 +697,7 @@ def chat(
         answer=answer,
         sources=sources,
         grounding=grounding,
+        metrics=metrics,
     )
 
 

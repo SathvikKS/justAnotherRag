@@ -161,6 +161,12 @@ def fake_chat_dependencies():
                 "answer": "generated answer",
                 "citations": [],
                 "insufficient": False,
+                "metrics": {
+                    "session_tps": 12.5,
+                    "prompt_tokens": 128,
+                    "completion_tokens": 32,
+                    "total_context_used": 160,
+                },
             }
 
     app.dependency_overrides[get_embedding_engine] = lambda: FakeEmbedder()
@@ -355,6 +361,12 @@ class TestChat:
         assert body["sources"][0]["score"] == 0.9
         assert body["grounding"]["status"] == "uncited"
         assert body["grounding"]["citations_required"] is False
+        assert body["metrics"] == {
+            "session_tps": 12.5,
+            "prompt_tokens": 128,
+            "completion_tokens": 32,
+            "total_context_used": 160,
+        }
 
     def test_greeting_bypasses_retrieval(self):
         response = client.post(
@@ -366,6 +378,7 @@ class TestChat:
         assert body["answer"] == "Hi! Ask me a question about your uploaded documents."
         assert body["sources"] == []
         assert body["grounding"]["status"] == "no_retrieval"
+        assert body.get("metrics") is None
 
     def test_assistant_location_bypasses_retrieval(self):
         response = client.post(
@@ -391,6 +404,7 @@ class TestChat:
                     "answer": "generated answer without citations",
                     "citations": [],
                     "insufficient": False,
+                    "metrics": None,
                 }
 
         app.dependency_overrides[get_llm_client] = lambda: FakeLLM()
@@ -417,6 +431,7 @@ class TestChat:
                     "answer": "The answer is supported by the document.",
                     "citations": [1],
                     "insufficient": False,
+                    "metrics": None,
                 }
 
         app.dependency_overrides[get_llm_client] = lambda: FakeLLM()

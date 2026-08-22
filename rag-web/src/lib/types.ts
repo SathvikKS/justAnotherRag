@@ -65,12 +65,20 @@ export type Grounding = {
   raw_answer?: string
 }
 
+export type ChatMetrics = {
+  session_tps: number
+  prompt_tokens: number
+  completion_tokens: number
+  total_context_used: number
+}
+
 export type ChatResponse = {
   query: string
   group_id: string
   answer: string
   sources: Source[]
   grounding: Grounding
+  metrics?: ChatMetrics | null
 }
 
 export type DebugSearchResponse = {
@@ -85,6 +93,7 @@ export type ChatMessage = {
   content: string
   sources?: Source[]
   grounding?: Grounding
+  metrics?: ChatMetrics | null
 }
 
 export type QueryMode = "chat" | "search"

@@ -1,4 +1,19 @@
 from abc import ABC, abstractmethod
+from typing import TypedDict
+
+
+class ChatMetrics(TypedDict):
+    session_tps: float
+    prompt_tokens: int
+    completion_tokens: int
+    total_context_used: int
+
+
+class LLMResponse(TypedDict):
+    answer: str
+    citations: list[int]
+    insufficient: bool
+    metrics: ChatMetrics | None
 
 
 class DocumentParserBase(ABC):
@@ -61,5 +76,5 @@ class LLMClientBase(ABC):
         context: list[str],
         require_citations: bool = False,
         history: str = "",
-    ) -> dict:
+    ) -> LLMResponse:
         ...

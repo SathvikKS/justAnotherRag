@@ -1,4 +1,5 @@
 import uuid
+import time
 
 from rag_core.config import get_settings
 
@@ -50,13 +51,15 @@ class MockLlmGrpcClient:
             response = call(payload)
         text_response = str(response["text"]).strip()
         try:
-            return json.loads(text_response)
+            parsed = json.loads(text_response)
         except json.JSONDecodeError:
-            return {
+            parsed = {
                 "answer": text_response,
                 "citations": [],
                 "insufficient": False,
             }
+        parsed.setdefault("metrics", None)
+        return parsed
 
 
 class VllmGrpcClient:
@@ -164,6 +167,8 @@ class VllmGrpcClient:
         from rag_grpc.vllm_proto import vllm_engine_pb2, vllm_engine_pb2_grpc
 
         prompt_text = self._render_prompt(prompt, context, require_citations, history)
+        tokenizer = self._get_tokenizer()
+        prompt_token_count = len(tokenizer.encode(prompt_text))
         request = vllm_engine_pb2.GenerateRequest(
             request_id=f"rag-chat-{uuid.uuid4()}",
             text=prompt_text,
@@ -174,6 +179,7 @@ class VllmGrpcClient:
             ),
             stream=False,
         )
+        started_at = time.perf_counter()
         with grpc.insecure_channel(self.target) as channel:
             stub = vllm_engine_pb2_grpc.VllmEngineStub(channel)
             token_ids = []
@@ -183,14 +189,33 @@ class VllmGrpcClient:
                     break
                 if response.HasField("chunk"):
                     token_ids.extend(response.chunk.token_ids)
+        elapsed_seconds = time.perf_counter() - started_at
+        completion_token_count = len(token_ids)
+        metrics = {
+            "session_tps": round(
+                completion_token_count / elapsed_seconds, 1
+            ) if elapsed_seconds > 0 else 0.0,
+            "prompt_tokens": prompt_token_count,
+            "completion_tokens": completion_token_count,
+            "total_context_used": prompt_token_count + completion_token_count,
+        }
         if not token_ids:
-            return {"answer": "", "citations": [], "insufficient": True}
-        tokenizer = self._get_tokenizer()
+            return {
+                "answer": "",
+                "citations": [],
+                "insufficient": True,
+                "metrics": metrics,
+            }
         decoded = tokenizer.decode(token_ids, skip_special_tokens=True).strip()
         try:
             parsed = json.loads(decoded)
         except json.JSONDecodeError:
-            return {"answer": decoded, "citations": [], "insufficient": True}
+            return {
+                "answer": decoded,
+                "citations": [],
+                "insufficient": True,
+                "metrics": metrics,
+            }
 
         citations = sorted({
             int(citation)
@@ -201,4 +226,5 @@ class VllmGrpcClient:
             "answer": parsed.get("answer", ""),
             "citations": citations,
             "insufficient": parsed.get("insufficient", False),
+            "metrics": metrics,
         }

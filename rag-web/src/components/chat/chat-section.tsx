@@ -301,6 +301,7 @@ export function ChatSection({ token }: ChatSectionProps) {
           content: body.answer,
           sources: body.sources,
           grounding: body.grounding,
+          metrics: body.metrics,
         },
       ])
 
@@ -568,6 +569,22 @@ export function ChatSection({ token }: ChatSectionProps) {
                   <p className="leading-6 break-words whitespace-pre-wrap">
                     {message.content}
                   </p>
+                  {message.role === "assistant" && message.metrics ? (
+                    <div className="mt-3 flex flex-wrap gap-2 text-xs text-muted-foreground">
+                      <Badge variant="outline">
+                        {message.metrics.session_tps.toFixed(1)} tok/s
+                      </Badge>
+                      <Badge variant="outline">
+                        {message.metrics.prompt_tokens} prompt
+                      </Badge>
+                      <Badge variant="outline">
+                        {message.metrics.completion_tokens} completion
+                      </Badge>
+                      <Badge variant="outline">
+                        {message.metrics.total_context_used} total
+                      </Badge>
+                    </div>
+                  ) : null}
                   {message.sources?.length ? (
                     <details className="mt-3 rounded-md border bg-muted/30 p-2">
                       <summary className="cursor-pointer text-xs font-medium text-muted-foreground">
