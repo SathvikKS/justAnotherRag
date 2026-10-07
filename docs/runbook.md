@@ -52,6 +52,8 @@ Compose also reads those service `.env` files with `env_file`. It overrides host
 
 If Redis requires a password, put the same passworded Redis URLs in `api/.env` and `ingestion/.env`.
 
+For S3-compatible LanceDB storage such as MinIO, configure the same `LANCEDB_URI` and AWS settings in `api/.env` and `ingestion/.env`. Shared settings enable LanceDB's `allow_http='true'` only when `AWS_ENDPOINT_URL` explicitly starts with `http://`. Use this for trusted local development endpoints; prefer HTTPS elsewhere. Restart both API and ingestion after changing storage settings because each process caches settings and the LanceDB store.
+
 When `API_KEY` is set in `api/.env`, `/mcp` requests must send `X-API-Key: <API_KEY>`. Leave it unset to disable MCP auth.
 
 ## Local Services
@@ -291,6 +293,12 @@ curl -X POST http://localhost:8000/debug/search -H "Content-Type: application/js
 - Confirm API and worker use the same Redis URLs.
 - Confirm the worker registered `rag_ingestion.tasks.process_document_task`.
 - Restart API and worker after `.env` changes.
+
+Group or file listing fails (`GET /groups/{group_id}` or `GET /groups/{group_id}/files`):
+
+- Call the endpoint directly with `curl` to inspect the HTTP status and response body independently of browser CORS handling.
+- If the browser reports CORS while the endpoint returns a plain-text `500`, inspect API logs and verify the LanceDB URI, `AWS_ENDPOINT_URL`, credentials, bucket, and MinIO reachability. A storage error can produce a 500 without CORS headers and appear in the browser as a CORS error.
+- For a local HTTP S3-compatible endpoint, confirm the configured URL explicitly uses `http://`; shared settings then enable `allow_http`. After any env change, restart both API and ingestion. If the error remains, distinguish URL/scheme configuration from DNS, credentials, bucket, and service connectivity failures using the API log and MinIO logs.
 
 `/chat` fails:
 

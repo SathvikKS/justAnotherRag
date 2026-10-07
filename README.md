@@ -64,6 +64,8 @@ HF_HOME=../model_cache/huggingface
 
 For local filesystem LanceDB storage shared by API and ingestion, set `LANCEDB_URI=../lancedb_data` in both `api/.env` and `ingestion/.env`.
 
+For LanceDB backed by an S3-compatible service such as local MinIO, configure the same `LANCEDB_URI` and AWS settings in both service env files. Shared settings add `allow_http='true'` automatically only when `AWS_ENDPOINT_URL` explicitly uses `http://`, which supports trusted local development endpoints. Prefer HTTPS for endpoints outside trusted local development. Restart both the API and ingestion worker after changing these settings; they cache settings and the LanceDB store at process startup.
+
 If Redis requires a password, set the passworded `CELERY_BROKER_URL` and `CELERY_RESULT_BACKEND` in both `api/.env` and `ingestion/.env`.
 
 Set `API_KEY` in `api/.env` to require `X-API-Key` on `/mcp` requests only. Leave it unset to disable MCP auth for local-only development.

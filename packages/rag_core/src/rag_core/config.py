@@ -1,4 +1,5 @@
 from functools import lru_cache
+from urllib.parse import urlsplit
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -61,6 +62,12 @@ class Settings(BaseSettings):
             }.items()
             if value
         }
+        if (
+            self.lancedb_uri.lower().startswith("s3://")
+            and self.aws_endpoint_url
+            and urlsplit(self.aws_endpoint_url).scheme.lower() == "http"
+        ):
+            options["allow_http"] = "true"
         return options or None
 
 @lru_cache(maxsize=1)

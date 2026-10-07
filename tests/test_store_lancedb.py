@@ -1,5 +1,6 @@
 import shutil
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
 
@@ -14,6 +15,45 @@ def temp_db(request):
 
 
 class TestLanceDBStore:
+    def test_s3_http_endpoint_options_are_passed_to_lancedb(self, monkeypatch):
+        from rag_core.config import Settings
+        from rag_storage import store_lancedb
+
+        settings = Settings(
+            lancedb_uri="s3://just-another-rag",
+            aws_endpoint_url="http://host.docker.internal:9000",
+            aws_access_key_id="test-access-key",
+            aws_secret_access_key="test-secret-key",
+            aws_region="us-east-1",
+        )
+        monkeypatch.setattr(store_lancedb, "get_settings", lambda: settings)
+
+        class Table:
+            schema = type(
+                "Schema",
+                (),
+                {"names": ["file_id", "created_at", "chunk_index", "text_quality"]},
+            )()
+
+            def list_indices(self):
+                return [type("Index", (), {"index_type": "FTS", "columns": ["text"]})()]
+
+        class Database:
+            def open_table(self, _table_name):
+                return Table()
+
+        connect = Mock(return_value=Database())
+        monkeypatch.setattr(store_lancedb.lancedb, "connect", connect)
+
+        store_lancedb.LanceDBStore()
+
+        options = connect.call_args.kwargs["storage_options"]
+        assert options["allow_http"] == "true"
+        assert options["aws_endpoint"] == "http://host.docker.internal:9000"
+        assert options["aws_access_key_id"] == "test-access-key"
+        assert options["aws_secret_access_key"] == "test-secret-key"
+        assert options["aws_region"] == "us-east-1"
+
     def test_upsert_and_search(self, temp_db):
         from rag_storage import LanceDBStore
 

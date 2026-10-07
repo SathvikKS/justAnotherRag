@@ -91,6 +91,8 @@ Settings:
 - `CORS_ORIGINS`
 - AWS credential fields for LanceDB S3 storage
 
+For S3-compatible LanceDB storage, shared settings add the LanceDB `allow_http='true'` option only when `AWS_ENDPOINT_URL` explicitly uses `http://`. This is intended for trusted local development services such as MinIO; use HTTPS for endpoints outside that environment. API and ingestion cache settings and the LanceDB store per process, so restart both after changing storage configuration.
+
 `EMBEDDING_MODEL` must produce 384-dimensional vectors unless the LanceDB schema is changed. The current implementation still uses `BAAI/bge-small-en-v1.5`, now through LangChain's Hugging Face embeddings wrapper, to keep query and indexed vectors compatible.
 
 `VLLM_GPU_MEMORY_UTIL` is read by `llm/src/rag_llm/serve.py` and passed to vLLM as `--gpu-memory-utilization`; the default is `0.88`. `VLLM_MAX_MODEL_LEN`, when set, is passed as `--max-model-len`. Leave it unset to use the model's native context length. On a 16GB GPU, Qwen3-4B's native 40960-token length needs more KV cache than utilization `0.75` leaves (about 3.7 GiB); `16384` fits that budget. Both launcher variables are removed from the vLLM process environment so vLLM does not warn about unknown `VLLM_*` names.
@@ -102,6 +104,8 @@ Local services read `.env` from their own service directory. API and ingestion p
 ServiceLauncher has `cpu` and `gpu` runtime profiles. The default `cpu` profile syncs the CPU dependency extra, serves mock LLM responses through `llm-cpu`, and runs real `embedding-cpu` and `ingestion-cpu` services with shared API and web services. The `gpu` profile syncs the CUDA 12.9 extra before starting the real `llm-gpu`, `embedding-gpu`, and `ingestion-gpu` services with those same shared API and web services. The shared API uses an `auto` LLM client that detects the mock or vLLM gRPC contract on the configured endpoint. An `all` compatibility alias points to the CPU service set so duplicate ports across profile-specific model services do not create an invalid implicit all-services profile. Profile-specific model service IDs keep the two dependency/runtime sets isolated; both profiles use the same local ports and must be started sequentially because the model sync is a pre-start step.
 
 ## LanceDB
+
+API and ingestion share the same LanceDB storage options. For an explicitly configured `http://` S3-compatible endpoint, settings enable `allow_http='true'`; HTTPS endpoints do not receive that option. Group and file listing reads the LanceDB table, so a storage client configuration or connectivity failure can surface as an API error on those endpoints. A browser may report the resulting response as a CORS failure when the server error was produced outside CORS middleware; that symptom alone does not establish that the CORS origin configuration is wrong.
 
 `DocumentChunk` fields:
 
