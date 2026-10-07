@@ -48,6 +48,8 @@ Chat:
 10. The AI response and user query are saved to `PostgresChatMessageHistory`. Grounding data and sources are serialized inside the message's `additional_kwargs` to allow full citation reload during session navigation.
 11. API returns `query`, `group_id`, `answer`, `sources`, and `grounding` metadata.
 
+The web client renders assistant `answer` content as sanitized Markdown with GitHub-flavored tables and other common formatting. It unwraps a complete serialized chat response envelope when one is present in a stored answer. Only table markup is permitted from raw HTML; all other HTML is displayed as text. User-authored messages remain plain text. Chat messages share one scroll viewport that follows new messages when the reader is near the bottom and preserves position while the reader is reviewing earlier content; retrieval search results continue to use the same panel without chat-message formatting.
+
 The Query settings sheet controls retrieval limit, question generation, and citation enforcement. The generation toggle is on by default and applies only to `/chat`; Search Vector DB (`/debug/search`) and MCP search continue to embed and search the supplied query directly. Generating questions adds an LLM call and may increase latency and final context size; duplicate chunks are merged before answer generation.
 
 MCP:

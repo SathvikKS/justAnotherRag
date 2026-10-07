@@ -10,9 +10,15 @@ import {
 
 import { GroupField } from "@/components/shared/group-field"
 import { highlightMatches } from "@/components/shared/highlight-matches"
+import { AssistantRichText } from "@/components/chat/assistant-rich-text"
 import { useGroup } from "@/context/group-context"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Bubble, Message } from "@/components/ui/message"
+import {
+  MessageScroller,
+  MessageScrollerItem,
+} from "@/components/ui/message-scroller"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import {
   Sheet,
@@ -535,10 +541,10 @@ export function ChatSection({ token }: ChatSectionProps) {
           </div>
         </div>
 
-        <ScrollArea className="min-h-0 flex-1">
-          <div className="flex flex-col gap-4 p-4">
-            {queryMode === "search" ? (
-              searchResults.length === 0 ? (
+        {queryMode === "search" ? (
+          <ScrollArea className="min-h-0 flex-1">
+            <div className="flex flex-col gap-4 p-4">
+              {searchResults.length === 0 ? (
                 <div className="flex min-h-40 items-center justify-center rounded-md border border-dashed text-center text-sm text-muted-foreground">
                   Search the selected group to inspect retrieval hits.
                 </div>
@@ -552,80 +558,104 @@ export function ChatSection({ token }: ChatSectionProps) {
                     renderSourceCard(result, index, "search")
                   )}
                 </div>
-              )
-            ) : messages.length === 0 ? (
-              <div className="flex min-h-40 items-center justify-center rounded-md border border-dashed text-sm text-muted-foreground">
+              )}
+            </div>
+          </ScrollArea>
+        ) : (
+          <MessageScroller
+            sessionKey={currentSessionId ?? "new"}
+            className="min-h-0 flex-1"
+          >
+            {messages.length === 0 ? (
+              <div className="flex min-h-40 items-center justify-center border-b text-center text-sm text-muted-foreground">
                 Ask a question about your indexed documents.
               </div>
             ) : (
               messages.map((message) => (
-                <article
+                <MessageScrollerItem
                   key={message.id}
-                  className={
-                    message.role === "user"
-                      ? "ml-auto max-w-[82%] rounded-md bg-primary p-3 text-sm break-words text-primary-foreground"
-                      : "mr-auto max-w-[88%] rounded-md border bg-background p-3 text-sm break-words"
-                  }
+                  messageId={message.id}
+                  scrollAnchor={message.role === "user"}
+                  className="w-full"
                 >
-                  {message.role === "assistant" && message.grounding ? (
-                    <div className="mb-2">
-                      <Badge
-                        variant={
-                          message.grounding.status === "cited"
-                            ? "default"
-                            : message.grounding.status === "rejected_uncited"
-                              ? "destructive"
-                              : "secondary"
-                        }
-                      >
-                        {message.grounding.status === "cited"
-                          ? `Cited: ${message.grounding.citations_found.join(", ")}`
-                          : message.grounding.status === "rejected_uncited"
-                            ? "Uncited: rejected"
-                            : message.grounding.status === "uncited"
-                              ? "Uncited"
-                              : message.sources?.length
-                                ? `${message.sources.length} sources`
-                                : "No sources"}
-                      </Badge>
-                    </div>
-                  ) : null}
-                  <p className="leading-6 break-words whitespace-pre-wrap">
-                    {message.content}
-                  </p>
-                  {message.role === "assistant" && message.metrics ? (
-                    <div className="mt-3 flex flex-wrap gap-2 text-xs text-muted-foreground">
-                      <Badge variant="outline">
-                        {message.metrics.session_tps.toFixed(1)} tok/s
-                      </Badge>
-                      <Badge variant="outline">
-                        {message.metrics.prompt_tokens} prompt
-                      </Badge>
-                      <Badge variant="outline">
-                        {message.metrics.completion_tokens} completion
-                      </Badge>
-                      <Badge variant="outline">
-                        {message.metrics.total_context_used} total
-                      </Badge>
-                    </div>
-                  ) : null}
-                  {message.sources?.length ? (
-                    <details className="mt-3 rounded-md border bg-muted/30 p-2">
-                      <summary className="cursor-pointer text-xs font-medium text-muted-foreground">
-                        Show evidence ({message.sources.length})
-                      </summary>
-                      <div className="mt-2 flex flex-col gap-2">
-                        {message.sources.map((result, index) =>
-                          renderSourceCard(result, index, message.id)
-                        )}
-                      </div>
-                    </details>
-                  ) : null}
-                </article>
+                  <Message
+                    align={message.role === "user" ? "end" : "start"}
+                    className="w-full"
+                  >
+                    <Bubble
+                      className={
+                        message.role === "user"
+                          ? "max-w-[82%] break-words bg-primary p-3 text-sm text-primary-foreground"
+                          : "max-w-[88%] break-words border bg-background p-3 text-sm"
+                      }
+                    >
+                      {message.role === "assistant" && message.grounding ? (
+                        <div className="mb-2">
+                          <Badge
+                            variant={
+                              message.grounding.status === "cited"
+                                ? "default"
+                                : message.grounding.status ===
+                                    "rejected_uncited"
+                                  ? "destructive"
+                                  : "secondary"
+                            }
+                          >
+                            {message.grounding.status === "cited"
+                              ? `Cited: ${message.grounding.citations_found.join(", ")}`
+                              : message.grounding.status ===
+                                  "rejected_uncited"
+                                ? "Uncited: rejected"
+                                : message.grounding.status === "uncited"
+                                  ? "Uncited"
+                                  : message.sources?.length
+                                    ? `${message.sources.length} sources`
+                                    : "No sources"}
+                          </Badge>
+                        </div>
+                      ) : null}
+                      {message.role === "assistant" ? (
+                        <AssistantRichText content={message.content} />
+                      ) : (
+                        <p className="leading-6 break-words whitespace-pre-wrap">
+                          {message.content}
+                        </p>
+                      )}
+                      {message.role === "assistant" && message.metrics ? (
+                        <div className="mt-3 flex flex-wrap gap-2 text-xs text-muted-foreground">
+                          <Badge variant="outline">
+                            {message.metrics.session_tps.toFixed(1)} tok/s
+                          </Badge>
+                          <Badge variant="outline">
+                            {message.metrics.prompt_tokens} prompt
+                          </Badge>
+                          <Badge variant="outline">
+                            {message.metrics.completion_tokens} completion
+                          </Badge>
+                          <Badge variant="outline">
+                            {message.metrics.total_context_used} total
+                          </Badge>
+                        </div>
+                      ) : null}
+                      {message.sources?.length ? (
+                        <details className="mt-3 rounded-md border bg-muted/30 p-2">
+                          <summary className="cursor-pointer text-xs font-medium text-muted-foreground">
+                            Show evidence ({message.sources.length})
+                          </summary>
+                          <div className="mt-2 flex flex-col gap-2">
+                            {message.sources.map((result, index) =>
+                              renderSourceCard(result, index, message.id)
+                            )}
+                          </div>
+                        </details>
+                      ) : null}
+                    </Bubble>
+                  </Message>
+                </MessageScrollerItem>
               ))
             )}
-          </div>
-        </ScrollArea>
+          </MessageScroller>
+        )}
 
         <form className="border-t p-4" onSubmit={handleChat}>
           {chatError ? (

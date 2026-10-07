@@ -56,7 +56,7 @@ flowchart TD
 
 ### Core Components
 
-1. **Web Client (`rag-web`)**: React + Vite frontend with Tailwind CSS and shadcn UI. Provides document management, upload queues with live progress, group selectors, and a multi-session chat workspace with source citations.
+1. **Web Client (`rag-web`)**: React + Vite frontend with Tailwind CSS and shadcn UI. Provides document management, upload queues with live progress, group selectors, and a multi-session chat workspace with formatted, sanitized Markdown assistant answers and source citations. User messages remain plain text.
 2. **API Gateway (`api/src/rag_api`)**: FastAPI application managing user authentication (JWT), chat session persistence, REST endpoints, and mounting the Model Context Protocol (MCP) server. Does not import PyTorch, vLLM, or heavy model weights.
 3. **Ingestion Worker (`ingestion/src/rag_ingestion`)**: Celery worker consuming document processing jobs from Redis. Uses Docling to parse PDFs, run OCR, chunk text, request embeddings, and save vectors to LanceDB.
 4. **Embedding Engine (`embedding/src/rag_embedding`)**: Independent gRPC microservice running `BAAI/bge-small-en-v1.5` via LangChain Hugging Face embeddings, producing 384-dimensional normalized vectors.
