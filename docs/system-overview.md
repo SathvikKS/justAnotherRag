@@ -58,7 +58,7 @@ flowchart TD
 
 1. **Web Client (`rag-web`)**: React + Vite frontend with Tailwind CSS and shadcn UI. Provides document management, upload queues with live progress, group selectors, and a multi-session chat workspace with formatted, sanitized Markdown assistant answers and source citations. User messages remain plain text.
 2. **API Gateway (`api/src/rag_api`)**: FastAPI application managing user authentication (JWT), chat session persistence, REST endpoints, and mounting the Model Context Protocol (MCP) server. Does not import PyTorch, vLLM, or heavy model weights.
-3. **Ingestion Worker (`ingestion/src/rag_ingestion`)**: Celery worker consuming document processing jobs from Redis. Uses Docling to parse PDFs, run OCR, chunk text, request embeddings, and save vectors to LanceDB.
+3. **Ingestion Worker (`ingestion/src/rag_ingestion`)**: Celery worker consuming document processing jobs from Redis. Uses Docling to parse PDFs and Excel workbooks, run OCR for PDFs, chunk text, request embeddings, and save vectors to LanceDB.
 4. **Embedding Engine (`embedding/src/rag_embedding`)**: Independent gRPC microservice running `BAAI/bge-small-en-v1.5` via LangChain Hugging Face embeddings, producing 384-dimensional normalized vectors.
 5. **LLM Engine (`llm/src/rag_llm`)**: gRPC microservice running vLLM with guided JSON decoding (or a local mock service for development without a GPU).
 6. **Storage Layer**:
@@ -70,7 +70,7 @@ flowchart TD
 
 ## 1. Document Upload & Ingestion Pipeline
 
-When a user uploads one or more PDF files, the system processes them asynchronously so that the web interface remains responsive.
+When a user uploads one or more PDF (`.pdf`) or Excel workbook (`.xlsx`, `.xlsm`) files, the system processes them asynchronously so that the web interface remains responsive. Workbook chunks record the worksheet's one-based position in the existing `page` metadata field.
 
 ```mermaid
 sequenceDiagram
@@ -84,7 +84,7 @@ sequenceDiagram
     participant Embed as Embedding Service (gRPC)
     participant Lance as LanceDB Store
 
-    User->>Web: Selects PDF file(s)
+    User->>Web: Selects PDF or Excel workbook file(s)
     Web->>Web: Validates size (< 50MB); limits to 5 parallel active uploads
     Web->>API: POST /upload (multipart: file bytes, group_id)
     API->>API: Validates group_id regex and file size
@@ -115,19 +115,19 @@ sequenceDiagram
 ### Step-by-Step Breakdown:
 
 1. **Client-Side Queue Management**:
-   - The user selects one or multiple PDFs in the web UI.
+   - The user selects one or multiple PDFs or Excel workbooks (`.xlsx`, `.xlsm`) in the web UI.
    - The frontend validates each file against the 50MB size limit and feeds them into a concurrency queue allowing at most 5 concurrent uploads.
    - Upload progress is displayed in real time using XHR `onprogress`.
 2. **Task Enqueueing**:
-   - `POST /upload` validates the PDF name and `group_id` (enforcing alphanumeric, hyphens, underscores, and dots).
+   - `POST /upload` validates the supported filename and `group_id` (enforcing alphanumeric, hyphens, underscores, and dots).
    - The file payload is enqueued to Redis as a Celery task: `rag_ingestion.tasks.process_document_task`.
    - The API immediately returns `{ "task_id": "<uuid>" }` without waiting for parsing.
 3. **Worker Startup & Warmup**:
    - Docling's parser and OCR pipeline are initialized once per worker process.
    - When `DOCLING_WARMUP_ENABLED=true`, the worker processes a small synthetic PDF at startup so the first real user upload does not incur a cold-start penalty.
 4. **Parsing & Hybrid Chunking**:
-   - Docling parses the document structure. If OCR is enabled, it uses the configured engine (`auto`, `rapidocr`, `tesseract_cli`, or `tesseract`).
-   - Docling's `HybridChunker` breaks down text into contextual chunks aligned with the embedding model's tokenizer.
+   - Docling parses PDF and workbook content. If OCR is enabled for a PDF, it uses the configured engine (`auto`, `rapidocr`, `tesseract_cli`, or `tesseract`).
+   - Workbook worksheet positions are stored as one-based page metadata. Docling's `HybridChunker` breaks down extracted text into contextual chunks aligned with the embedding model's tokenizer.
    - A text quality analyzer (`text_quality`) inspects chunk contents, filtering out OCR mojibake or corrupt scans.
 5. **Batch Embedding**:
    - Extracted chunk texts are sent to the embedding service via gRPC in batches of 128 to avoid gRPC message size limitations.

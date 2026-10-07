@@ -1,11 +1,11 @@
 # Local RAG
 
-Local RAG app for PDF ingestion and generated answers over indexed document groups.
+Local RAG app for PDF and Excel workbook ingestion and generated answers over indexed document groups.
 
 The Python side is a uv workspace with separate root services:
 
 - `api/`: FastAPI HTTP API.
-- `ingestion/`: Celery PDF ingestion worker.
+- `ingestion/`: Celery document ingestion worker.
 - `embedding/`: gRPC embedding service.
 - `llm/`: vLLM gRPC launcher plus mock server.
 - `packages/`: shared config, LanceDB storage, and gRPC clients.
@@ -15,9 +15,9 @@ The root workspace environment is intentionally kept Windows-compatible for `api
 
 ## What Works Today
 
-- Upload PDFs and assign them to a `group_id`.
+- Upload PDFs (`.pdf`) and Excel workbooks (`.xlsx`, `.xlsm`) and assign them to a `group_id` (maximum 50MB per file).
 - Process uploads in `ingestion_worker`.
-- Parse PDFs with Docling's LangChain loader and tokenizer-aware chunking.
+- Parse PDFs and Excel workbooks with Docling's LangChain loader and tokenizer-aware chunking. Workbook worksheet positions are stored as page metadata on their chunks.
 - Support configurable OCR in ingestion through Docling when documents are scanned or image-heavy.
 - Embed queries and chunks through `embedding_service`.
 - Store chunks in LanceDB with 384-dimensional vectors.

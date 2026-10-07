@@ -362,9 +362,14 @@ export function UploadSection() {
     const newItems: UploadItem[] = []
     for (let i = 0; i < nextFiles.length; i++) {
       const nextFile = nextFiles[i]
-      if (!nextFile.name.toLowerCase().endsWith(".pdf")) {
+      const fileName = nextFile.name.toLowerCase()
+      if (
+        ![".pdf", ".xlsx", ".xlsm"].some((extension) =>
+          fileName.endsWith(extension)
+        )
+      ) {
         showErrorToast(`Skipped ${nextFile.name}`, {
-          description: "Only PDF files are supported.",
+          description: "Choose a PDF, XLSX, or XLSM file.",
         })
         continue
       }
@@ -403,7 +408,7 @@ export function UploadSection() {
 
     if (uploadItems.length === 0) {
       showErrorToast("No files selected", {
-        description: "Please choose or drop PDFs first.",
+        description: "Please choose or drop supported files first.",
       })
       return
     }
@@ -589,9 +594,9 @@ export function UploadSection() {
       <div className="grid w-full gap-6 lg:grid-cols-3">
         <Card className="flex w-full min-w-0 flex-col">
           <CardHeader>
-            <CardTitle>Upload PDFs</CardTitle>
+            <CardTitle>Upload documents</CardTitle>
             <CardDescription>
-              Index documents into the selected group (Max 50MB per file).
+              Index PDF and Excel files (Max 50MB per file).
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-4">
@@ -604,7 +609,7 @@ export function UploadSection() {
                 <input
                   className="sr-only"
                   type="file"
-                  accept="application/pdf,.pdf"
+                  accept="application/pdf,.pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,.xlsx,application/vnd.ms-excel.sheet.macroEnabled.12,.xlsm"
                   multiple
                   onChange={(event) => pickFiles(event.target.files)}
                 />
@@ -612,10 +617,10 @@ export function UploadSection() {
                   <Upload className="size-3.5 shrink-0" aria-hidden="true" />
                 </span>
                 <span className="max-w-full truncate text-xs font-semibold">
-                  Drop PDFs or browse
+                  Drop files or browse
                 </span>
                 <span className="text-[10px] text-muted-foreground">
-                  PDFs only (Max 50MB)
+                  PDF, XLSX, or XLSM (Max 50MB)
                 </span>
               </label>
 
@@ -773,7 +778,7 @@ export function UploadSection() {
                 />
                 <p className="text-sm font-medium">No files indexed</p>
                 <p className="text-xs text-muted-foreground">
-                  Upload a PDF to get started.
+                  Upload a PDF or Excel workbook to get started.
                 </p>
               </div>
             ) : (

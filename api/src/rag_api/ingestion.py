@@ -29,14 +29,19 @@ def validate_group_id(group_id: str) -> str:
     return normalized
 
 
-def validate_pdf_filename(filename: str | None) -> str:
-    if not filename or not filename.lower().endswith(".pdf"):
-        raise ValueError("Only PDF files are supported")
+def validate_document_filename(filename: str | None) -> str:
+    suffix = Path(filename).suffix.lower() if filename else ""
+    if suffix == ".xls":
+        raise ValueError(
+            "Legacy .xls files are not supported; save the workbook as .xlsx or .xlsm"
+        )
+    if suffix not in {".pdf", ".xlsx", ".xlsm"}:
+        raise ValueError("Only PDF, XLSX, and XLSM files are supported")
     return filename
 
 
 def enqueue_upload(file_bytes: bytes, filename: str | None, group_id: str) -> str:
-    safe_filename = validate_pdf_filename(filename)
+    safe_filename = validate_document_filename(filename)
     safe_group_id = validate_group_id(group_id)
 
     try:

@@ -196,7 +196,7 @@ def get_chunk(chunk_id: str) -> GetChunkResult:
 
 @mcp.tool()
 def upload_document(file_path: str, group_id: str) -> UploadDocumentResult:
-    """Queue a local PDF file for ingestion into one group."""
+    """Queue a supported local document file for ingestion into one group."""
     path = Path(file_path).expanduser()
     if not path.exists() or not path.is_file():
         raise ValueError("file_path must point to an existing file")

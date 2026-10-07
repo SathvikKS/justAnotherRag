@@ -1,5 +1,7 @@
 from types import SimpleNamespace
 
+import pytest
+
 from rag_ingestion.parser_docling import DoclingParser, _build_ocr_options, text_quality
 
 
@@ -60,6 +62,9 @@ def test_docling_parser_extracts_chunk_metadata(monkeypatch):
         def __init__(self, pipeline_options):
             self.pipeline_options = pipeline_options
 
+    class FakeExcelFormatOption:
+        pass
+
     class FakeDocumentConverter:
         def __init__(self, format_options):
             self.format_options = format_options
@@ -67,7 +72,7 @@ def test_docling_parser_extracts_chunk_metadata(monkeypatch):
     monkeypatch.setattr(
         "rag_ingestion.parser_docling._load_docling_components",
         lambda: (
-            SimpleNamespace(PDF="pdf"),
+            SimpleNamespace(PDF="pdf", XLSX="xlsx"),
             lambda lang: SimpleNamespace(lang=lang),
             FakePdfPipelineOptions,
             lambda lang, backend: SimpleNamespace(lang=lang, backend=backend),
@@ -76,6 +81,7 @@ def test_docling_parser_extracts_chunk_metadata(monkeypatch):
             FakeHybridChunker,
             FakeDocumentConverter,
             FakePdfFormatOption,
+            FakeExcelFormatOption,
             FakeTokenizer,
             FakeLoader,
             SimpleNamespace(DOC_CHUNKS="doc_chunks"),
@@ -96,9 +102,10 @@ def test_docling_parser_extracts_chunk_metadata(monkeypatch):
     )
 
     parser = DoclingParser()
-    chunks = parser.extract_text(b"%PDF", "doc.pdf")
+    chunks = parser.extract_text(b"spreadsheet bytes", "doc.xlsx")
 
     pipeline_options = parser.converter.format_options["pdf"].pipeline_options
+    assert isinstance(parser.converter.format_options["xlsx"], FakeExcelFormatOption)
     assert pipeline_options.do_ocr is True
     assert pipeline_options.force_backend_text is True
     assert pipeline_options.ocr_options.lang == ["eng"]
@@ -107,13 +114,19 @@ def test_docling_parser_extracts_chunk_metadata(monkeypatch):
         {
             "text": "Useful document text that is definitely long enough.",
             "metadata": {
-                "filename": "doc.pdf",
+                "filename": "doc.xlsx",
                 "page": 3,
                 "text_quality": "ok",
             },
         }
     ]
     assert parser.last_skipped == 1
+
+
+def test_docling_parser_rejects_legacy_xls():
+    parser = object.__new__(DoclingParser)
+    with pytest.raises(ValueError, match=r"Legacy \.xls files are not supported"):
+        parser.extract_text(b"legacy workbook bytes", "workbook.xls")
 
 
 def test_build_ocr_options_supports_rapidocr_backend(monkeypatch):

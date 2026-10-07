@@ -243,14 +243,23 @@ class TestUpload:
         response = client.post("/upload", data={"group_id": "test-group"})
         assert response.status_code == 422
 
-    def test_non_pdf_file_returns_400(self):
+    def test_unsupported_file_returns_400(self):
         response = client.post(
             "/upload",
             files={"file": ("test.txt", b"hello", "text/plain")},
             data={"group_id": "test-group"},
         )
         assert response.status_code == 400
-        assert "PDF" in response.json()["detail"]
+        assert "supported" in response.json()["detail"]
+
+    def test_legacy_xls_file_returns_400(self):
+        response = client.post(
+            "/upload",
+            files={"file": ("workbook.xls", b"legacy workbook", "application/vnd.ms-excel")},
+            data={"group_id": "test-group"},
+        )
+        assert response.status_code == 400
+        assert "Legacy .xls" in response.json()["detail"]
 
     def test_blank_group_id_returns_400(self):
         response = client.post(
@@ -298,6 +307,52 @@ class TestUpload:
         assert response.json() == {"task_id": "task-123"}
         assert calls["name"] == "rag_ingestion.tasks.process_document_task"
         assert calls["args"] == (b"%PDF-1.4 fake", "doc.pdf", "test-group")
+
+    def test_valid_xlsx_dispatches_task(self, monkeypatch):
+        calls = {}
+
+        class FakeCelery:
+            def send_task(self, name, args):
+                calls["name"] = name
+                calls["args"] = tuple(args)
+                return type("Result", (), {"id": "task-xlsx"})()
+
+        monkeypatch.setattr("rag_api.ingestion.celery_app", FakeCelery())
+
+        response = client.post(
+            "/upload",
+            files={
+                "file": (
+                    "workbook.xlsx",
+                    b"xlsx bytes",
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )
+            },
+            data={"group_id": "test-group"},
+        )
+
+        assert response.status_code == 200
+        assert calls["name"] == "rag_ingestion.tasks.process_document_task"
+        assert calls["args"] == (b"xlsx bytes", "workbook.xlsx", "test-group")
+
+    def test_valid_xlsm_dispatches_task(self, monkeypatch):
+        class FakeCelery:
+            def send_task(self, name, args):
+                return type("Result", (), {"id": "task-xlsm"})()
+
+        monkeypatch.setattr("rag_api.ingestion.celery_app", FakeCelery())
+        response = client.post(
+            "/upload",
+            files={
+                "file": (
+                    "macros.xlsm",
+                    b"xlsm bytes",
+                    "application/vnd.ms-excel.sheet.macroEnabled.12",
+                )
+            },
+            data={"group_id": "test-group"},
+        )
+        assert response.status_code == 200
 
     def test_status_returns_success_result(self, monkeypatch):
         class FakeResult:

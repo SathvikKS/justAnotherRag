@@ -190,11 +190,13 @@ rag_ingestion.tasks.process_document_task
 
 ## Upload And Chat
 
-Upload (Note: maximum file size is 50MB; larger uploads will return a `400 Bad Request` error with message `File size exceeds 50MB limit.`):
+Upload a PDF (`.pdf`) or Excel workbook (`.xlsx`, `.xlsm`). Legacy binary `.xls` files are rejected; save them as `.xlsx` or `.xlsm` first. The maximum file size is 50MB; larger uploads return `400 Bad Request` with `File size exceeds 50MB limit.`:
 
 ```powershell
 curl -X POST http://localhost:8000/upload -F "file=@doc.pdf" -F "group_id=demo"
 ```
+
+Workbook worksheets are indexed as text; each chunk stores its worksheet's one-based position in the existing `page` metadata field.
 
 Poll:
 
@@ -241,7 +243,7 @@ Mounted MCP tools:
 - `upload_document`
 - `check_upload_status`
 
-`upload_document` expects a server-local PDF path and returns a Celery `task_id`. Use `check_upload_status` to poll ingestion state.
+`upload_document` expects a server-local PDF or Excel workbook path (`.pdf`, `.xlsx`, or `.xlsm`) and returns a Celery `task_id`. Use `check_upload_status` to poll ingestion state.
 
 Greeting and assistant small-talk queries such as `hi`, `who are you`, and `where are you` bypass retrieval and return no sources.
 

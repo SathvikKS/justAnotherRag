@@ -18,7 +18,11 @@ def _load_docling_components():
         TesseractOcrOptions,
     )
     from docling.chunking import HybridChunker
-    from docling.document_converter import DocumentConverter, PdfFormatOption
+    from docling.document_converter import (
+        DocumentConverter,
+        ExcelFormatOption,
+        PdfFormatOption,
+    )
     from docling_core.transforms.chunker.tokenizer.huggingface import HuggingFaceTokenizer
     from langchain_docling.loader import DoclingLoader, ExportType
     from transformers import AutoTokenizer
@@ -33,6 +37,7 @@ def _load_docling_components():
         HybridChunker,
         DocumentConverter,
         PdfFormatOption,
+        ExcelFormatOption,
         HuggingFaceTokenizer,
         DoclingLoader,
         ExportType,
@@ -126,6 +131,7 @@ class DoclingParser(DocumentParserBase):
             HybridChunker,
             DocumentConverter,
             PdfFormatOption,
+            ExcelFormatOption,
             HuggingFaceTokenizer,
             DoclingLoader,
             ExportType,
@@ -145,7 +151,8 @@ class DoclingParser(DocumentParserBase):
             pipeline_options.ocr_options = _build_ocr_options(settings)
         converter = DocumentConverter(
             format_options={
-                InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)
+                InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options),
+                InputFormat.XLSX: ExcelFormatOption(),
             }
         )
         self.loader_cls = DoclingLoader
@@ -155,6 +162,10 @@ class DoclingParser(DocumentParserBase):
 
     def extract_text(self, file_bytes: bytes, filename: str) -> list[dict]:
         suffix = Path(filename).suffix or ".pdf"
+        if suffix.lower() == ".xls":
+            raise ValueError(
+                "Legacy .xls files are not supported; save the workbook as .xlsx or .xlsm"
+            )
         with NamedTemporaryFile(suffix=suffix, delete=False) as temp_file:
             temp_file.write(file_bytes)
             temp_path = Path(temp_file.name)

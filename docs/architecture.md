@@ -5,7 +5,7 @@ This is the current implemented architecture.
 ## Workspace
 
 - `api/src/rag_api`: FastAPI routes, MCP tools, and HTTP dependency providers.
-- `ingestion/src/rag_ingestion`: Celery app, PDF parsing, ingestion task.
+- `ingestion/src/rag_ingestion`: Celery app, PDF and Excel workbook parsing, ingestion task.
 - `embedding/src/rag_embedding`: LangChain-backed embedding engine and gRPC server.
 - `llm/src/rag_llm`: vLLM gRPC launcher and mock server.
 - `packages/rag_core`: settings and shared interfaces.
@@ -20,14 +20,14 @@ Root `pyproject.toml` is a uv workspace for the service apps and shared packages
 Upload:
 
 1. Client-Side Concurrency Queue:
-   - Client manages selected PDFs using a concurrent upload queue with a maximum limit of 5 parallel active uploads.
+   - Client manages selected PDF (`.pdf`) and Excel (`.xlsx`, `.xlsm`) files using a concurrent upload queue with a maximum limit of 5 parallel active uploads.
    - Files exceeding 50MB are rejected at selection time with a validation toast.
    - The queue displays dynamic status counts (e.g., `2 uploading · 1 indexing · 5 pending`).
    - Active uploads render visual progress percentages computed via XHR `onprogress`.
    - Completed files are automatically promoted to the indexed file list and removed from the active queue.
-2. `POST /upload` validates the PDF filename, `group_id`, and verifies that the file size is under 50MB (52,428,800 bytes).
+2. `POST /upload` validates the supported filename, `group_id`, and verifies that the file size is under 50MB (52,428,800 bytes).
 3. API sends Celery task `rag_ingestion.tasks.process_document_task`.
-4. `ingestion_worker` parses PDF bytes with a Docling-backed `DocumentParserBase` implementation configured through Docling OCR settings.
+4. `ingestion_worker` parses PDF and Excel workbook bytes with a Docling-backed `DocumentParserBase` implementation configured through Docling OCR settings. For workbooks, each worksheet's one-based position is stored in the existing `page` metadata field for its chunks.
 5. Worker sends Docling chunk texts to `embedding_service` (batched in chunks of 128 to prevent gRPC message size limit exhaustion).
 6. Worker writes chunk records to LanceDB with a per-upload `file_id`, chunk index, creation timestamp, and text-quality marker.
 7. `/status/{task_id}` reads Celery result state.
