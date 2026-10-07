@@ -51,6 +51,7 @@ Agents must keep project documentation current as part of any code or architectu
 ## Required Docs
 
 - `README.md`: user-facing setup and basic app usage.
+- `docs/system-overview.md`: human-facing guide explaining how the full system works (end-to-end architecture, document ingestion, chat RAG flow, and the MCP offering). Agents must keep this updated as changes arrive.
 - `docs/architecture.md`: module boundaries, runtime flow, and architectural rules.
 - `docs/runbook.md`: commands, environment variables, worker startup, Redis setup, and troubleshooting.
 - `docs/agent-maintenance.md`: documentation maintenance rules for future agents.
@@ -59,6 +60,7 @@ Agents must keep project documentation current as part of any code or architectu
 
 - Before finishing a change, decide whether README or `docs/` must be updated.
 - Update docs in the same change when behavior, setup, endpoints, workers, services, environment variables, storage, or architecture changes.
+- Keep `docs/system-overview.md` updated as changes arrive so human readers always have an accurate mental model of how the full system works.
 - Treat `docs/architecture.md` as the handoff guide for new chat sessions.
 - Treat `docs/runbook.md` as the source of truth for running and debugging the app.
 - If a future agent would need to rediscover a fact, document it.

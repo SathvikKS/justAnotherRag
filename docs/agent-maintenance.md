@@ -5,6 +5,7 @@ Agents must keep internal documentation current when changing architecture, runt
 ## Documentation Roles
 
 - `README.md`: user-facing overview, setup, and basic API usage.
+- `docs/system-overview.md`: human-facing guide explaining how the full system works end-to-end (file ingestion, chat RAG pipeline, and MCP tools). Agents must keep this updated as changes arrive.
 - `docs/architecture.md`: current implemented architecture and module boundaries.
 - `docs/runbook.md`: exact commands, environment variables, Redis/Celery workflow, and troubleshooting.
 - `docs/agent-maintenance.md`: rules for keeping docs current.
@@ -18,6 +19,13 @@ Update `README.md` when:
 - Public endpoint usage changes.
 - Required services or environment variables change.
 - The app gains a new user-visible capability.
+
+Update `docs/system-overview.md` when:
+
+- End-to-end data flow or pipeline stages change (upload, parsing, chunking, embedding, vector storage, retrieval, generation).
+- Chat interface flow, citation grounding, or history persistence changes.
+- MCP tools, transport, or authentication mechanisms change.
+- New external services, databases, or protocol offerings are added.
 
 Update `docs/architecture.md` when:
 
