@@ -228,3 +228,60 @@ class VllmGrpcClient:
             "insufficient": parsed.get("insufficient", False),
             "metrics": metrics,
         }
+
+
+class AutoLlmGrpcClient:
+    """Select the mock or vLLM gRPC contract exposed by the configured endpoint."""
+
+    def __init__(
+        self,
+        target: str | None = None,
+        model: str | None = None,
+        max_tokens: int | None = None,
+    ):
+        self._mock_client = MockLlmGrpcClient(target)
+        self._vllm_client = VllmGrpcClient(target, model, max_tokens)
+        self._backend: str | None = None
+
+    def generate_response(
+        self,
+        prompt: str,
+        context: list[str],
+        require_citations: bool = False,
+        history: str = "",
+    ) -> dict:
+        if self._backend == "mock":
+            return self._mock_client.generate_response(
+                prompt,
+                context,
+                require_citations=require_citations,
+                history=history,
+            )
+        if self._backend == "vllm":
+            return self._vllm_client.generate_response(
+                prompt,
+                context,
+                require_citations=require_citations,
+                history=history,
+            )
+
+        import grpc
+
+        try:
+            response = self._mock_client.generate_response(
+                prompt,
+                context,
+                require_citations=require_citations,
+                history=history,
+            )
+        except grpc.RpcError:
+            response = self._vllm_client.generate_response(
+                prompt,
+                context,
+                require_citations=require_citations,
+                history=history,
+            )
+            self._backend = "vllm"
+        else:
+            self._backend = "mock"
+        return response

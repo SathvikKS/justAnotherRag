@@ -5,7 +5,12 @@ from dotenv import load_dotenv
 
 from rag_core.config import get_settings
 from rag_core.interfaces import EmbeddingEngineBase, LLMClientBase, VectorStoreBase
-from rag_grpc import EmbeddingClient, MockLlmGrpcClient, VllmGrpcClient
+from rag_grpc import (
+    AutoLlmGrpcClient,
+    EmbeddingClient,
+    MockLlmGrpcClient,
+    VllmGrpcClient,
+)
 from rag_storage import LanceDBStore
 
 load_dotenv(Path(__file__).resolve().parents[2] / ".env", encoding="utf-8-sig")
@@ -27,4 +32,10 @@ def get_llm_client() -> LLMClientBase:
     settings = get_settings()
     if settings.llm_provider == "mock":
         return MockLlmGrpcClient(settings.llm_grpc_url)
+    if settings.llm_provider == "auto":
+        return AutoLlmGrpcClient(
+            settings.llm_grpc_url,
+            settings.llm_model,
+            settings.llm_max_tokens,
+        )
     return VllmGrpcClient()

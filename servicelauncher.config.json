@@ -12,8 +12,8 @@
         "llm-cpu",
         "embedding-cpu",
         "ingestion-cpu",
-        "api-cpu",
-        "web-cpu"
+        "api",
+        "web"
       ]
     },
     "gpu": {
@@ -21,8 +21,8 @@
         "llm-gpu",
         "embedding-gpu",
         "ingestion-gpu",
-        "api-gpu",
-        "web-gpu"
+        "api",
+        "web"
       ]
     },
     "all": {
@@ -30,8 +30,8 @@
         "llm-cpu",
         "embedding-cpu",
         "ingestion-cpu",
-        "api-cpu",
-        "web-cpu"
+        "api",
+        "web"
       ]
     }
   },
@@ -172,7 +172,7 @@
         "timeout": "15s"
       }
     },
-    "api-cpu": {
+    "api": {
       "name": "API",
       "cwd": "${project.root}/api",
       "command": [
@@ -193,7 +193,7 @@
       ],
       "env": {
         "PYTHONUNBUFFERED": "1",
-        "LLM_PROVIDER": "mock",
+        "LLM_PROVIDER": "auto",
         "LLM_GRPC_URL": "localhost:50052"
       },
       "env_files": ["${project.root}/api/.env"],
@@ -203,62 +203,7 @@
         "timeout": "10s"
       }
     },
-    "api-gpu": {
-      "name": "API",
-      "cwd": "${project.root}/api",
-      "command": [
-        "uv",
-        "run",
-        "--no-sync",
-        "uvicorn",
-        "rag_api.app:app",
-        "--reload",
-        "--reload-dir",
-        "src",
-        "--reload-dir",
-        "../packages",
-        "--host",
-        "0.0.0.0",
-        "--port",
-        "${port}"
-      ],
-      "env": {
-        "PYTHONUNBUFFERED": "1",
-        "LLM_PROVIDER": "vllm",
-        "LLM_GRPC_URL": "localhost:50052"
-      },
-      "env_files": ["${project.root}/api/.env"],
-      "ports": [8000],
-      "shutdown": {
-        "signal": "interrupt",
-        "timeout": "10s"
-      }
-    },
-    "web-cpu": {
-      "name": "Web",
-      "cwd": "${project.root}/rag-web",
-      "pre_start": [
-        {
-          "name": "npm install",
-          "command": ["npm", "i"]
-        }
-      ],
-      "command": [
-        "npm",
-        "run",
-        "dev",
-        "--",
-        "--host",
-        "0.0.0.0",
-        "--port",
-        "${port}",
-        "--strictPort",
-        "--clearScreen",
-        "false"
-      ],
-      "ports": [5175]
-    },
-    "web-gpu": {
+    "web": {
       "name": "Web",
       "cwd": "${project.root}/rag-web",
       "pre_start": [

@@ -143,8 +143,10 @@ The `llm/pyproject.toml` extras intentionally route `torch`, `torchvision`, and 
 
 The ServiceLauncher config has two runtime profiles, with `cpu` selected by default. Its `all` entry is a compatibility alias for the CPU service set because the profile-specific services share ports:
 
-- `cpu` starts `llm-cpu`, which returns mock responses, then starts the real `embedding-cpu`, `ingestion-cpu`, `api-cpu`, and `web-cpu` services. Its pre-start sync selects the CPU dependency extra, and the CPU embedding/ingestion services hide CUDA with `CUDA_VISIBLE_DEVICES`.
-- `gpu` starts the real `llm-gpu`, `embedding-gpu`, `ingestion-gpu`, `api-gpu`, and `web-gpu` services. Its pre-start sync selects the CUDA 12.9 dependency extra before the remaining services use `uv run --no-sync`.
+- `cpu` starts `llm-cpu`, which returns mock responses, then starts the real `embedding-cpu` and `ingestion-cpu` services alongside the shared `api` and `web` services. Its pre-start sync selects the CPU dependency extra, and the CPU embedding/ingestion services hide CUDA with `CUDA_VISIBLE_DEVICES`.
+- `gpu` starts the real `llm-gpu`, `embedding-gpu`, and `ingestion-gpu` services alongside the same shared `api` and `web` services. Its pre-start sync selects the CUDA 12.9 dependency extra before the remaining services use `uv run --no-sync`.
+
+The shared API uses `LLM_PROVIDER=auto`: it detects the mock gRPC contract in the CPU profile and falls back to the vLLM gRPC contract in the GPU profile.
 
 Use `servicelauncher --profile gpu` to select the GPU profile for a session. Keep profile startup sequential so the dependency sync completes before the `--no-sync` services start. Re-import `servicelauncher.config.json` after editing it.
 

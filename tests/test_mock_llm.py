@@ -3,7 +3,9 @@ import socket
 import sys
 import types
 
-from rag_grpc import MockLlmGrpcClient
+import grpc
+
+from rag_grpc import AutoLlmGrpcClient, MockLlmGrpcClient
 from rag_grpc.vllm_client import VllmGrpcClient
 from rag_llm.mock_server import serve_mock_llm
 
@@ -17,6 +19,20 @@ def test_llm_provider_mock_selects_mock_client(monkeypatch):
     dependencies.get_llm_client.cache_clear()
     try:
         assert isinstance(dependencies.get_llm_client(), MockLlmGrpcClient)
+    finally:
+        dependencies.get_llm_client.cache_clear()
+        get_settings.cache_clear()
+
+
+def test_llm_provider_auto_selects_auto_client(monkeypatch):
+    from rag_api import dependencies
+    from rag_core.config import get_settings
+
+    monkeypatch.setenv("LLM_PROVIDER", "auto")
+    get_settings.cache_clear()
+    dependencies.get_llm_client.cache_clear()
+    try:
+        assert isinstance(dependencies.get_llm_client(), AutoLlmGrpcClient)
     finally:
         dependencies.get_llm_client.cache_clear()
         get_settings.cache_clear()
@@ -42,6 +58,76 @@ def test_mock_llm_client_calls_mock_server():
         "insufficient": False,
         "metrics": None,
     }
+
+
+def test_auto_llm_client_uses_mock_backend_and_caches_selection():
+    class FakeMockClient:
+        def __init__(self):
+            self.calls = 0
+
+        def generate_response(self, *args, **kwargs):
+            self.calls += 1
+            return {"answer": "mock", "citations": [], "insufficient": False}
+
+    class FailingVllmClient:
+        def generate_response(self, *args, **kwargs):
+            raise AssertionError("vLLM backend should not be called")
+
+    client = AutoLlmGrpcClient.__new__(AutoLlmGrpcClient)
+    client._mock_client = FakeMockClient()
+    client._vllm_client = FailingVllmClient()
+    client._backend = None
+
+    assert client.generate_response("question", [])["answer"] == "mock"
+    assert client.generate_response("question again", [])["answer"] == "mock"
+    assert client._mock_client.calls == 2
+    assert client._backend == "mock"
+
+
+def test_auto_llm_client_calls_mock_server():
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+
+    server = serve_mock_llm(port)
+    try:
+        answer = AutoLlmGrpcClient(f"127.0.0.1:{port}").generate_response(
+            "question?",
+            ["context"],
+        )
+    finally:
+        server.stop(0)
+
+    assert answer["answer"] == "Mock answer for: question?"
+
+
+def test_auto_llm_client_falls_back_to_vllm_backend():
+    class FailingMockClient:
+        def __init__(self):
+            self.calls = 0
+
+        def generate_response(self, *args, **kwargs):
+            self.calls += 1
+            raise grpc.RpcError("mock protocol unavailable")
+
+    class FakeVllmClient:
+        def __init__(self):
+            self.calls = 0
+
+        def generate_response(self, *args, **kwargs):
+            self.calls += 1
+            return {"answer": "vllm", "citations": [], "insufficient": False}
+
+    client = AutoLlmGrpcClient.__new__(AutoLlmGrpcClient)
+    client._mock_client = FailingMockClient()
+    client._vllm_client = FakeVllmClient()
+    client._backend = None
+
+    assert client.generate_response("question", [])["answer"] == "vllm"
+    assert client.generate_response("question again", [])["answer"] == "vllm"
+    assert client._mock_client.calls == 1
+    assert client._vllm_client.calls == 2
+    assert client._backend == "vllm"
 
 
 def test_vllm_client_uses_tokenizer_chat_template():
