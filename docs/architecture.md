@@ -40,13 +40,15 @@ Chat:
 2. API validates that the `session_id` exists and belongs to the authenticated user.
 3. API retrieves conversation history for the session using `PostgresChatMessageHistory` (stored in the `message_store` table in PostgreSQL), formatting it into the LLM prompt.
 4. API bypasses retrieval for simple greetings and returns a direct response with no sources.
-5. API embeds document questions through `embedding_service`.
-6. API searches LanceDB through `LanceDBStore`.
-7. API sends the query, conversation history, and labelled retrieved source text to `llm_service`.
+5. When `expand_query` is enabled (the web setting defaults on), API asks `llm_service` to generate up to five search questions from the user's query. If generation fails or yields no usable questions, it searches with the original query.
+6. API embeds each search question through `embedding_service` and searches LanceDB through `LanceDBStore`, applying `limit` to each question. It merges the results by unique chunk, retaining the strongest relevance result; the pre-deduplication candidate count can reach five times `limit`.
+7. API sends the original query, conversation history, and labelled unique retrieved source text to `llm_service`. With `expand_query` disabled, it embeds and searches the original query once.
 8. `VllmGrpcClient` wraps the request in a document-QA system/user message, appending history, and renders it with the tokenizer chat template when available.
 9. The `VllmGrpcClient` uses vLLM's guided decoding (`json_schema`) to force the LLM to output a structured JSON response containing the user-facing `answer`, a `citations` array, and an `insufficient` boolean. The API uses this structured metadata to record whether valid citations were found or if the context was insufficient. If `require_citations` is true for the request, the API rejects uncited or insufficient document answers with an insufficient-context response while preserving the raw uncited answer in `grounding.raw_answer` for debugging. When false, uncited answers are labelled but not rejected.
 10. The AI response and user query are saved to `PostgresChatMessageHistory`. Grounding data and sources are serialized inside the message's `additional_kwargs` to allow full citation reload during session navigation.
 11. API returns `query`, `group_id`, `answer`, `sources`, and `grounding` metadata.
+
+The Query settings sheet controls retrieval limit, question generation, and citation enforcement. The generation toggle is on by default and applies only to `/chat`; Search Vector DB (`/debug/search`) and MCP search continue to embed and search the supplied query directly. Generating questions adds an LLM call and may increase latency and final context size; duplicate chunks are merged before answer generation.
 
 MCP:
 

@@ -219,7 +219,7 @@ Response contains the JWT `access_token`.
 Chat:
 
 ```powershell
-curl -X POST http://localhost:8000/chat -H "Content-Type: application/json" -H "Authorization: Bearer <access_token>" -d "{\"query\":\"What is this document about?\",\"group_id\":\"demo\",\"limit\":5,\"session_id\":\"<session_uuid>\"}"
+curl -X POST http://localhost:8000/chat -H "Content-Type: application/json" -H "Authorization: Bearer <access_token>" -d "{\"query\":\"What is this document about?\",\"group_id\":\"demo\",\"limit\":5,\"expand_query\":true,\"session_id\":\"<session_uuid>\"}"
 ```
 
 Response has `answer` and `sources`.
@@ -245,7 +245,7 @@ Mounted MCP tools:
 
 Greeting and assistant small-talk queries such as `hi`, `who are you`, and `where are you` bypass retrieval and return no sources.
 
-The web query panel has `Ask AI` and `Search Vector DB` tabs. `Ask AI` calls `/chat` and shows grounding badges on assistant messages. `Search Vector DB` calls `/debug/search` and shows ranked retrieval hits without LLM generation. Query responses omit vectors and empty optional fields to keep payloads small. Query settings let users choose the retrieval limit (`5` by default) and toggle citation enforcement for AI requests. The prompt always asks for `[n]` citations on document-backed answers; enforcement only decides whether uncited answers are accepted or rejected. Document-backed answers are labelled `Cited` or `Uncited` based on whether valid citations were found. When citation enforcement is on, uncited document answers are replaced with `I don't have enough information in the provided documents.` and the raw rejected answer is available in an expandable debug panel. `No document sources supplied` means the answer did not use retrieved chunks.
+The web query panel has `Ask AI` and `Search Vector DB` tabs. `Ask AI` calls `/chat` and shows grounding badges on assistant messages. `Search Vector DB` calls `/debug/search` and shows ranked retrieval hits without LLM generation. Query responses omit vectors and empty optional fields to keep payloads small. Query settings let users choose the per-question retrieval limit (`5` by default), toggle search-question generation (on by default for AI requests), and toggle citation enforcement. With generation on, `/chat` asks the LLM for up to five questions derived from the user's query, retrieves up to the selected limit for each, then deduplicates the merged results before the final answer call. The original query remains the final answer prompt. If question generation fails or returns no usable questions, retrieval uses the original query. Candidate retrieval can reach five times the limit before deduplication; this adds an LLM call and can increase latency and final prompt context size. The setting is disabled in Search mode. `/debug/search` and MCP `search_knowledge_base` continue direct single-query retrieval. The prompt always asks for `[n]` citations on document-backed answers; enforcement only decides whether uncited answers are accepted or rejected. Document-backed answers are labelled `Cited` or `Uncited` based on whether valid citations were found. When citation enforcement is on, uncited document answers are replaced with `I don't have enough information in the provided documents.` and the raw rejected answer is available in an expandable debug panel. `No document sources supplied` means the answer did not use retrieved chunks.
 
 List indexed groups:
 

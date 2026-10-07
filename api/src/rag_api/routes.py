@@ -33,6 +33,7 @@ class ChatRequest(BaseModel):
     group_id: str
     limit: int = Field(5, ge=1, le=20)
     require_citations: bool = False
+    expand_query: bool = True
     session_id: str = "11111111-1111-1111-1111-111111111111"
 
     @field_validator("group_id")
@@ -298,6 +299,97 @@ def score_from_result(item: dict) -> float | None:
         if value is not None:
             return float(value)
     return None
+
+
+def _normalize_search_questions(value: object, original_query: str) -> list[str]:
+    if not isinstance(value, (list, tuple)):
+        return [original_query]
+
+    questions: list[str] = []
+    seen: set[str] = set()
+    for candidate in value:
+        if not isinstance(candidate, str):
+            continue
+        question = candidate.strip()
+        normalized = question.casefold()
+        if not question or normalized in seen:
+            continue
+        seen.add(normalized)
+        questions.append(question)
+        if len(questions) == 5:
+            break
+
+    return questions or [original_query]
+
+
+def _result_score(item: dict) -> tuple[float | None, bool]:
+    """Return a comparable score and whether smaller values are better."""
+    for key in ("_relevance_score", "_score"):
+        value = item.get(key)
+        if value is not None:
+            return float(value), False
+    value = item.get("_distance")
+    if value is not None:
+        return float(value), True
+    value = item.get("score")
+    if value is not None:
+        return float(value), False
+    return None, False
+
+
+def _result_rank(item: dict) -> float | None:
+    score, is_distance = _result_score(item)
+    if score is None:
+        return None
+    return -score if is_distance else score
+
+
+def _merge_search_results(result_sets: list[list[dict]]) -> list[dict]:
+    """Deduplicate chunks, keeping best scores and stable ranking ties."""
+    merged: list[dict] = []
+    positions: dict[str, int] = {}
+    for results in result_sets:
+        for item in results:
+            chunk_id = item.get("chunk_id")
+            if not isinstance(chunk_id, str) or not chunk_id:
+                merged.append(item)
+                continue
+
+            existing_position = positions.get(chunk_id)
+            if existing_position is None:
+                positions[chunk_id] = len(merged)
+                merged.append(item)
+                continue
+
+            current = merged[existing_position]
+            current_score, current_is_distance = _result_score(current)
+            candidate_score, candidate_is_distance = _result_score(item)
+            if candidate_score is None:
+                continue
+            if current_score is None:
+                merged[existing_position] = item
+                continue
+
+            # A vector-store search uses one metric for all its query results. Keep
+            # the first item if score metadata unexpectedly changes shape.
+            if candidate_is_distance != current_is_distance:
+                continue
+            is_better = (
+                candidate_score < current_score
+                if candidate_is_distance
+                else candidate_score > current_score
+            )
+            if is_better:
+                merged[existing_position] = item
+
+    # Python's sort is stable, so equal-ranked chunks retain their first-seen order.
+    return sorted(
+        merged,
+        key=lambda item: (
+            _result_rank(item) is None,
+            -_result_rank(item) if _result_rank(item) is not None else 0.0,
+        ),
+    )
 
 
 def source_from_result(item: dict, query: str | None = None) -> Source:
@@ -631,13 +723,37 @@ def chat(
                 metrics=None,
             )
 
-        query_vector = embedder.embed_text(payload.query)
-        results = store.search(
-            query_vector=query_vector,
-            query_text=payload.query,
-            group_id=payload.group_id,
-            limit=payload.limit,
-        )
+        if payload.expand_query:
+            try:
+                generated_questions = llm.generate_search_questions(payload.query)
+            except Exception:
+                generated_questions = []
+            search_queries = _normalize_search_questions(
+                generated_questions,
+                payload.query,
+            )
+        else:
+            search_queries = [payload.query]
+
+        if len(search_queries) == 1:
+            query_vectors = [embedder.embed_text(search_queries[0])]
+        else:
+            query_vectors = embedder.embed_texts(search_queries)
+        if len(query_vectors) != len(search_queries):
+            raise ValueError(
+                "Embedding engine returned a different number of vectors than queries"
+            )
+
+        result_sets = [
+            store.search(
+                query_vector=query_vector,
+                query_text=search_query,
+                group_id=payload.group_id,
+                limit=payload.limit,
+            )
+            for search_query, query_vector in zip(search_queries, query_vectors)
+        ]
+        results = _merge_search_results(result_sets)
         sources = [source_from_result(item, payload.query) for item in results]
         context = [
             f"{item.get('filename') or 'source'}"

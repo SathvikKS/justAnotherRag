@@ -14,12 +14,23 @@ import grpc
 def serve_mock_llm(port: int) -> grpc.Server:
     def generate(request: bytes, context: grpc.ServicerContext) -> bytes:
         body = json.loads(request.decode("utf-8"))
-        answer = f"Mock answer for: {body.get('prompt', '')}"
-        response_dict = {
-            "answer": answer,
-            "citations": [],
-            "insufficient": False,
-        }
+        prompt = body.get("prompt", "")
+        if body.get("operation") == "generate_search_questions":
+            response_dict = {
+                "questions": [
+                    f"What are the main ideas related to {prompt}?",
+                    f"How does {prompt} work?",
+                    f"Why is {prompt} important?",
+                    f"What examples or applications are there for {prompt}?",
+                    f"What challenges or limitations are associated with {prompt}?",
+                ],
+            }
+        else:
+            response_dict = {
+                "answer": f"Mock answer for: {prompt}",
+                "citations": [],
+                "insufficient": False,
+            }
         return json.dumps({"text": json.dumps(response_dict)}).encode("utf-8")
 
     handler = grpc.unary_unary_rpc_method_handler(

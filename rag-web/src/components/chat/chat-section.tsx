@@ -59,6 +59,7 @@ export function ChatSection({ token }: ChatSectionProps) {
   const [query, setQuery] = React.useState("")
   const [queryMode, setQueryMode] = React.useState<QueryMode>("chat")
   const [sourceLimit, setSourceLimit] = React.useState(5)
+  const [expandQuery, setExpandQuery] = React.useState(true)
   const [requireCitations, setRequireCitations] = React.useState(false)
   const [messages, setMessages] = React.useState<ChatMessage[]>([])
   const [searchResults, setSearchResults] = React.useState<Source[]>([])
@@ -287,6 +288,7 @@ export function ChatSection({ token }: ChatSectionProps) {
           query: cleanQuery,
           group_id: cleanGroupId,
           limit: sourceLimit,
+          expand_query: expandQuery,
           require_citations: requireCitations,
           session_id: activeSessionId,
         }),
@@ -472,7 +474,7 @@ export function ChatSection({ token }: ChatSectionProps) {
                 <SheetHeader>
                   <SheetTitle>Query settings</SheetTitle>
                   <SheetDescription>
-                    Retrieval and citation options.
+                    Retrieval, query expansion, and citation options.
                   </SheetDescription>
                 </SheetHeader>
                 <div className="flex flex-col gap-6 px-6">
@@ -489,6 +491,27 @@ export function ChatSection({ token }: ChatSectionProps) {
                       min={1}
                       max={20}
                       step={1}
+                    />
+                    <span className="text-xs text-muted-foreground">
+                      {expandQuery
+                        ? `Per question; up to ${sourceLimit * 5} candidates before deduplication`
+                        : "Per query"}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between gap-4">
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-sm font-medium">
+                        Generate search questions
+                      </span>
+                      <span className="text-xs text-muted-foreground">
+                        Find more relevant sources for each answer
+                      </span>
+                    </div>
+                    <Switch
+                      checked={expandQuery}
+                      disabled={queryMode === "search"}
+                      onCheckedChange={setExpandQuery}
+                      aria-label="Generate search questions"
                     />
                   </div>
                   <div className="flex items-center justify-between gap-4">

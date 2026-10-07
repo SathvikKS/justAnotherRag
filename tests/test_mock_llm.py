@@ -60,6 +60,24 @@ def test_mock_llm_client_calls_mock_server():
     }
 
 
+def test_mock_llm_client_generates_search_questions():
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+
+    server = serve_mock_llm(port)
+    try:
+        questions = MockLlmGrpcClient(f"127.0.0.1:{port}").generate_search_questions(
+            "vector search"
+        )
+    finally:
+        server.stop(0)
+
+    assert len(questions) == 5
+    assert len(set(questions)) == 5
+    assert all("vector search" in question for question in questions)
+
+
 def test_auto_llm_client_uses_mock_backend_and_caches_selection():
     class FakeMockClient:
         def __init__(self):
@@ -128,6 +146,80 @@ def test_auto_llm_client_falls_back_to_vllm_backend():
     assert client._mock_client.calls == 1
     assert client._vllm_client.calls == 2
     assert client._backend == "vllm"
+
+
+def test_auto_llm_client_selects_backend_on_expansion_and_reuses_it():
+    class FakeMockClient:
+        def __init__(self):
+            self.expansions = 0
+            self.answers = 0
+
+        def generate_search_questions(self, query):
+            self.expansions += 1
+            return [f"mock search for {query}"]
+
+        def generate_response(self, *args, **kwargs):
+            self.answers += 1
+            return {"answer": "mock final", "citations": [], "insufficient": False}
+
+    class FailingVllmClient:
+        def generate_search_questions(self, query):
+            raise AssertionError("vLLM backend should not be called")
+
+        def generate_response(self, *args, **kwargs):
+            raise AssertionError("vLLM backend should not be called")
+
+    client = AutoLlmGrpcClient.__new__(AutoLlmGrpcClient)
+    client._mock_client = FakeMockClient()
+    client._vllm_client = FailingVllmClient()
+    client._backend = None
+
+    assert client.generate_search_questions("query") == ["mock search for query"]
+    assert client._backend == "mock"
+    assert client.generate_response("query", [])["answer"] == "mock final"
+    assert client._mock_client.expansions == 1
+    assert client._mock_client.answers == 1
+
+
+def test_auto_llm_client_expansion_falls_back_to_vllm_and_caches_backend():
+    class FailingMockClient:
+        def __init__(self):
+            self.expansions = 0
+            self.answers = 0
+
+        def generate_search_questions(self, query):
+            self.expansions += 1
+            raise grpc.RpcError("mock protocol unavailable")
+
+        def generate_response(self, *args, **kwargs):
+            self.answers += 1
+            raise AssertionError("mock backend should remain unused")
+
+    class FakeVllmClient:
+        def __init__(self):
+            self.expansions = 0
+            self.answers = 0
+
+        def generate_search_questions(self, query):
+            self.expansions += 1
+            return [f"vllm search for {query}"]
+
+        def generate_response(self, *args, **kwargs):
+            self.answers += 1
+            return {"answer": "vllm final", "citations": [], "insufficient": False}
+
+    client = AutoLlmGrpcClient.__new__(AutoLlmGrpcClient)
+    client._mock_client = FailingMockClient()
+    client._vllm_client = FakeVllmClient()
+    client._backend = None
+
+    assert client.generate_search_questions("query") == ["vllm search for query"]
+    assert client._backend == "vllm"
+    assert client.generate_response("query", [])["answer"] == "vllm final"
+    assert client._mock_client.expansions == 1
+    assert client._mock_client.answers == 0
+    assert client._vllm_client.expansions == 1
+    assert client._vllm_client.answers == 1
 
 
 def test_vllm_client_uses_tokenizer_chat_template():
@@ -250,6 +342,108 @@ def test_vllm_client_generates_unique_request_ids(monkeypatch):
     assert requests[0].request_id != requests[1].request_id
     assert requests[0].request_id.startswith("rag-chat-")
     assert requests[1].request_id.startswith("rag-chat-")
+
+
+def test_vllm_client_generates_search_questions_with_separate_schema(monkeypatch):
+    requests = []
+    rendered_messages = []
+
+    class FakeTokenizer:
+        chat_template = "template"
+
+        def apply_chat_template(self, messages, tokenize, add_generation_prompt):
+            rendered_messages.extend(messages)
+            assert tokenize is False
+            assert add_generation_prompt is True
+            return "expanded query prompt"
+
+        def decode(self, token_ids, skip_special_tokens=True):
+            assert token_ids == [11, 12]
+            return json.dumps(
+                {
+                    "questions": [
+                        "first?", "second?", "third?", "fourth?", "fifth?",
+                    ]
+                }
+            )
+
+    class FakeGenerateRequest:
+        def __init__(self, **kwargs):
+            self.__dict__.update(kwargs)
+
+    class FakeSamplingParams:
+        def __init__(self, **kwargs):
+            self.__dict__.update(kwargs)
+
+    class FakeResponse:
+        def __init__(self):
+            self.complete = types.SimpleNamespace(output_ids=[11, 12])
+
+        def HasField(self, name):
+            return name == "complete"
+
+    class FakeStub:
+        def __init__(self, channel):
+            self.channel = channel
+
+        def Generate(self, request):
+            requests.append(request)
+            return iter([FakeResponse()])
+
+    class FakeChannel:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setitem(
+        sys.modules,
+        "grpc",
+        types.SimpleNamespace(insecure_channel=lambda target: FakeChannel()),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "rag_grpc.vllm_proto.vllm_engine_pb2",
+        types.SimpleNamespace(
+            GenerateRequest=FakeGenerateRequest,
+            SamplingParams=FakeSamplingParams,
+        ),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "rag_grpc.vllm_proto.vllm_engine_pb2_grpc",
+        types.SimpleNamespace(VllmEngineStub=FakeStub),
+    )
+
+    client = VllmGrpcClient.__new__(VllmGrpcClient)
+    client.target = "127.0.0.1:50051"
+    client.max_tokens = 16
+    client._tokenizer = FakeTokenizer()
+
+    assert client.generate_search_questions("How does vector search work?") == [
+        "first?", "second?", "third?", "fourth?", "fifth?",
+    ]
+    assert requests[0].text == "expanded query prompt"
+    assert requests[0].sampling_params.json_schema == json.dumps(
+        {
+            "type": "object",
+            "properties": {
+                "questions": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "minItems": 5,
+                    "maxItems": 5,
+                },
+            },
+            "required": ["questions"],
+            "additionalProperties": False,
+        }
+    )
+    system = rendered_messages[0]["content"]
+    assert "exactly five distinct" in system
+    assert "do not answer it" in system
+    assert rendered_messages[1]["content"] == "User query:\nHow does vector search work?"
 
 
 def test_vllm_client_reports_metrics(monkeypatch):

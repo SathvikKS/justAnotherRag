@@ -69,6 +69,7 @@ If yes, update the matching docs in the same change.
 - MCP is mounted at `/mcp` and must keep using shared providers/helpers rather than calling REST handlers.
 - `/chat` returns a generated `answer` and retrieval `sources`.
 - `/chat` bypasses retrieval for simple greetings.
+- `/chat` can generate up to five search questions before retrieval; the web setting defaults on. Apply `limit` per question, merge unique chunks before the final answer prompt, preserve the original user query for that prompt, and fall back to direct-query retrieval if question generation fails or yields no usable questions. This adds an LLM call and may increase latency and context size; `/debug/search` and MCP search remain direct-query flows.
 - `/chat` supports request-level citation enforcement; keep it off by default unless the UI/request enables it.
 - vLLM prompts should use tokenizer chat templates when available, not hard-coded per-model templates.
 - Group/file CRUD endpoints delete LanceDB chunk rows permanently.

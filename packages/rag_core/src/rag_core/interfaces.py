@@ -27,6 +27,10 @@ class EmbeddingEngineBase(ABC):
     def embed_text(self, text: str) -> list[float]:
         ...
 
+    def embed_texts(self, texts: list[str]) -> list[list[float]]:
+        """Embed multiple texts, with a compatibility-preserving scalar fallback."""
+        return [self.embed_text(text) for text in texts]
+
 
 class VectorStoreBase(ABC):
     @abstractmethod
@@ -69,6 +73,11 @@ class VectorStoreBase(ABC):
 
 
 class LLMClientBase(ABC):
+    @abstractmethod
+    def generate_search_questions(self, query: str) -> list[str]:
+        """Generate document-retrieval questions derived from a user query."""
+        ...
+
     @abstractmethod
     def generate_response(
         self,

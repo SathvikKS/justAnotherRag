@@ -20,6 +20,20 @@ LLM_RESPONSE_SCHEMA = {
     "additionalProperties": False,
 }
 
+SEARCH_QUESTIONS_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "questions": {
+            "type": "array",
+            "items": {"type": "string"},
+            "minItems": 5,
+            "maxItems": 5,
+        },
+    },
+    "required": ["questions"],
+    "additionalProperties": False,
+}
+
 
 class MockLlmGrpcClient:
     def __init__(self, target: str | None = None):
@@ -60,6 +74,28 @@ class MockLlmGrpcClient:
             }
         parsed.setdefault("metrics", None)
         return parsed
+
+    def generate_search_questions(self, query: str) -> list[str]:
+        import json
+
+        import grpc
+
+        payload = {"operation": "generate_search_questions", "prompt": query}
+        with grpc.insecure_channel(self.target) as channel:
+            call = channel.unary_unary(
+                "/rag.llm.LLM/Generate",
+                request_serializer=lambda body: json.dumps(body).encode("utf-8"),
+                response_deserializer=lambda body: json.loads(body.decode("utf-8")),
+            )
+            response = call(payload)
+        try:
+            parsed = json.loads(str(response["text"]).strip())
+        except (KeyError, TypeError, json.JSONDecodeError):
+            return []
+        questions = parsed.get("questions", []) if isinstance(parsed, dict) else []
+        if not isinstance(questions, list):
+            return []
+        return [question for question in questions if isinstance(question, str)]
 
 
 class VllmGrpcClient:
@@ -155,6 +191,35 @@ class VllmGrpcClient:
             ]
         )
 
+    def _render_search_questions_prompt(self, query: str) -> str:
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "Generate exactly five distinct, concise questions that can be "
+                    "used independently to search a document collection for material "
+                    "relevant to the user's query. Preserve the query's intent, cover "
+                    "useful facets, and do not answer it. Return only JSON matching "
+                    "the required schema."
+                ),
+            },
+            {"role": "user", "content": f"User query:\n{query}"},
+        ]
+        tokenizer = self._get_tokenizer()
+        if getattr(tokenizer, "chat_template", None):
+            return tokenizer.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=True,
+            )
+        return "\n\n".join(
+            [
+                f"System: {messages[0]['content']}",
+                f"User: {messages[1]['content']}",
+                "Assistant:",
+            ]
+        )
+
     def generate_response(
         self,
         prompt: str,
@@ -229,6 +294,43 @@ class VllmGrpcClient:
             "metrics": metrics,
         }
 
+    def generate_search_questions(self, query: str) -> list[str]:
+        import grpc
+
+        from rag_grpc.vllm_proto import vllm_engine_pb2, vllm_engine_pb2_grpc
+
+        prompt_text = self._render_search_questions_prompt(query)
+        tokenizer = self._get_tokenizer()
+        request = vllm_engine_pb2.GenerateRequest(
+            request_id=f"rag-query-expansion-{uuid.uuid4()}",
+            text=prompt_text,
+            sampling_params=vllm_engine_pb2.SamplingParams(
+                max_tokens=self.max_tokens,
+                temperature=0.2,
+                json_schema=json.dumps(SEARCH_QUESTIONS_SCHEMA),
+            ),
+            stream=False,
+        )
+        with grpc.insecure_channel(self.target) as channel:
+            stub = vllm_engine_pb2_grpc.VllmEngineStub(channel)
+            token_ids = []
+            for response in stub.Generate(request):
+                if response.HasField("complete"):
+                    token_ids = list(response.complete.output_ids)
+                    break
+                if response.HasField("chunk"):
+                    token_ids.extend(response.chunk.token_ids)
+        if not token_ids:
+            return []
+        try:
+            parsed = json.loads(tokenizer.decode(token_ids, skip_special_tokens=True).strip())
+        except (TypeError, json.JSONDecodeError):
+            return []
+        questions = parsed.get("questions", []) if isinstance(parsed, dict) else []
+        if not isinstance(questions, list):
+            return []
+        return [question for question in questions if isinstance(question, str)]
+
 
 class AutoLlmGrpcClient:
     """Select the mock or vLLM gRPC contract exposed by the configured endpoint."""
@@ -285,3 +387,20 @@ class AutoLlmGrpcClient:
         else:
             self._backend = "mock"
         return response
+
+    def generate_search_questions(self, query: str) -> list[str]:
+        if self._backend == "mock":
+            return self._mock_client.generate_search_questions(query)
+        if self._backend == "vllm":
+            return self._vllm_client.generate_search_questions(query)
+
+        import grpc
+
+        try:
+            questions = self._mock_client.generate_search_questions(query)
+        except grpc.RpcError:
+            questions = self._vllm_client.generate_search_questions(query)
+            self._backend = "vllm"
+        else:
+            self._backend = "mock"
+        return questions

@@ -104,16 +104,31 @@ def clear_api_key(monkeypatch):
 @pytest.fixture(autouse=True)
 def fake_chat_dependencies():
     class FakeEmbedder:
+        def __init__(self):
+            self.single_calls = []
+            self.batch_calls = []
+
         def embed_text(self, text):
+            self.single_calls.append(text)
             return [0.01] * 384
+
+        def embed_texts(self, texts):
+            self.batch_calls.append(list(texts))
+            return [[0.01] * 384 for _ in texts]
 
     class FakeStore:
         def __init__(self):
             self.search_calls = []
+            self.results_by_query = {}
 
         def search(self, query_vector, query_text, group_id=None, limit=5):
-            self.search_calls.append(query_text)
-            return [
+            self.search_calls.append({
+                "query_vector": query_vector,
+                "query_text": query_text,
+                "group_id": group_id,
+                "limit": limit,
+            })
+            default_results = [
                 {
                     "chunk_id": "chunk-1",
                     "file_id": "file-1",
@@ -124,7 +139,8 @@ def fake_chat_dependencies():
                     "group_id": group_id,
                     "score": 0.9,
                 }
-            ][:limit]
+            ]
+            return self.results_by_query.get(query_text, default_results)[:limit]
 
         def list_groups(self):
             return [{"group_id": "safe-id", "chunks": 1, "files": 1}]
@@ -153,6 +169,22 @@ def fake_chat_dependencies():
             return 1
 
     class FakeLLM:
+        def __init__(self):
+            self.search_question_calls = []
+            self.questions = [
+                "test query overview",
+                "test query details",
+                "test query examples",
+                "test query requirements",
+                "test query outcomes",
+            ]
+
+        def generate_search_questions(self, query):
+            self.search_question_calls.append(query)
+            if isinstance(self.questions, Exception):
+                raise self.questions
+            return self.questions
+
         def generate_response(self, prompt, context, require_citations=False, history=""):
             assert prompt == "test query"
             assert context == ["doc.pdf p.1\nmatched text"]
@@ -169,10 +201,16 @@ def fake_chat_dependencies():
                 },
             }
 
-    app.dependency_overrides[get_embedding_engine] = lambda: FakeEmbedder()
-    app.dependency_overrides[get_vector_store] = lambda: FakeStore()
-    app.dependency_overrides[get_llm_client] = lambda: FakeLLM()
+    app.state.fake_embedder = FakeEmbedder()
+    app.state.fake_store = FakeStore()
+    app.state.fake_llm = FakeLLM()
+    app.dependency_overrides[get_embedding_engine] = lambda: app.state.fake_embedder
+    app.dependency_overrides[get_vector_store] = lambda: app.state.fake_store
+    app.dependency_overrides[get_llm_client] = lambda: app.state.fake_llm
     yield
+    for key in ("fake_embedder", "fake_store", "fake_llm"):
+        if hasattr(app.state, key):
+            delattr(app.state, key)
     app.dependency_overrides.clear()
 
 
@@ -367,6 +405,172 @@ class TestChat:
             "completion_tokens": 32,
             "total_context_used": 160,
         }
+        assert app.state.fake_llm.search_question_calls == ["test query"]
+        assert [call["query_text"] for call in app.state.fake_store.search_calls] == [
+            "test query overview",
+            "test query details",
+            "test query examples",
+            "test query requirements",
+            "test query outcomes",
+        ]
+        assert app.state.fake_embedder.batch_calls == [[
+            "test query overview",
+            "test query details",
+            "test query examples",
+            "test query requirements",
+            "test query outcomes",
+        ]]
+
+    def test_expansion_can_be_disabled(self):
+        response = client.post(
+            "/chat",
+            json={
+                "query": "test query",
+                "group_id": "safe-id",
+                "limit": 3,
+                "expand_query": False,
+            },
+        )
+
+        assert response.status_code == 200
+        assert app.state.fake_llm.search_question_calls == []
+        assert app.state.fake_embedder.single_calls == ["test query"]
+        assert app.state.fake_embedder.batch_calls == []
+        assert app.state.fake_store.search_calls == [{
+            "query_vector": [0.01] * 384,
+            "query_text": "test query",
+            "group_id": "safe-id",
+            "limit": 3,
+        }]
+
+    def test_expansion_trims_deduplicates_and_caps_at_five(self):
+        app.state.fake_llm.questions = [
+            " Alpha ",
+            "alpha",
+            " ",
+            "Beta",
+            "Gamma",
+            "Delta",
+            "Epsilon",
+            "Zeta",
+        ]
+
+        response = client.post(
+            "/chat",
+            json={"query": "test query", "group_id": "safe-id", "limit": 5},
+        )
+
+        assert response.status_code == 200
+        assert [call["query_text"] for call in app.state.fake_store.search_calls] == [
+            "Alpha", "Beta", "Gamma", "Delta", "Epsilon"
+        ]
+        assert app.state.fake_embedder.batch_calls == [[
+            "Alpha", "Beta", "Gamma", "Delta", "Epsilon"
+        ]]
+
+    @pytest.mark.parametrize(
+        "generated_questions",
+        [
+            [None, "  ", "Only one", "only one"],
+            {"questions": ["malformed shape"]},
+            None,
+        ],
+    )
+    def test_invalid_or_fewer_questions_fall_back_or_use_valid_subset(
+        self, generated_questions
+    ):
+        app.state.fake_llm.questions = generated_questions
+
+        response = client.post(
+            "/chat",
+            json={"query": "test query", "group_id": "safe-id", "limit": 5},
+        )
+
+        assert response.status_code == 200
+        expected_queries = ["Only one"] if isinstance(generated_questions, list) else ["test query"]
+        assert [call["query_text"] for call in app.state.fake_store.search_calls] == expected_queries
+        assert len(app.state.fake_embedder.single_calls) == 1
+        assert app.state.fake_embedder.batch_calls == []
+
+    def test_expansion_exception_falls_back_to_original_query(self):
+        app.state.fake_llm.questions = RuntimeError("expansion unavailable")
+
+        response = client.post(
+            "/chat",
+            json={"query": "test query", "group_id": "safe-id", "limit": 5},
+        )
+
+        assert response.status_code == 200
+        assert [call["query_text"] for call in app.state.fake_store.search_calls] == ["test query"]
+        assert app.state.fake_embedder.single_calls == ["test query"]
+
+    def test_batch_embedding_count_mismatch_returns_error_without_search(self):
+        app.state.fake_embedder.embed_texts = lambda texts: [[0.01] * 384]
+
+        response = client.post(
+            "/chat",
+            json={"query": "test query", "group_id": "safe-id", "limit": 5},
+        )
+
+        assert response.status_code == 500
+        assert "different number of vectors" in response.json()["detail"]
+        assert app.state.fake_store.search_calls == []
+
+    def test_merged_sources_keep_best_distance_and_citation_indices_aligned(self):
+        app.state.fake_llm.questions = ["first", "second"]
+        app.state.fake_store.results_by_query = {
+            "first": [
+                {"chunk_id": "shared", "filename": "old.pdf", "text": "older", "_distance": 0.4},
+                {"filename": "one.pdf", "text": "first unidentified chunk", "_distance": 0.3},
+            ],
+            "second": [
+                {"chunk_id": "shared", "filename": "best.pdf", "text": "best result", "_distance": 0.1},
+                {"chunk_id": "last", "filename": "last.pdf", "text": "last result", "_distance": 0.2},
+            ],
+        }
+
+        class CitationLLM:
+            def generate_search_questions(self, query):
+                return ["first", "second"]
+
+            def generate_response(self, prompt, context, require_citations=False, history=""):
+                assert prompt == "test query"
+                assert context == [
+                    "best.pdf\nbest result",
+                    "last.pdf\nlast result",
+                    "one.pdf\nfirst unidentified chunk",
+                ]
+                return {
+                    "answer": "The final source supports this. [2]",
+                    "citations": [2],
+                    "insufficient": False,
+                    "metrics": None,
+                }
+
+        app.dependency_overrides[get_llm_client] = lambda: CitationLLM()
+        response = client.post(
+            "/chat",
+            json={
+                "query": "test query",
+                "group_id": "safe-id",
+                "limit": 2,
+                "require_citations": True,
+            },
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert [source.get("chunk_id") for source in body["sources"]] == [
+            "shared", "last", None
+        ]
+        assert [source["filename"] for source in body["sources"]] == [
+            "best.pdf",
+            "last.pdf",
+            "one.pdf",
+        ]
+        assert body["sources"][0]["score"] == 0.1
+        assert body["grounding"]["citations_found"] == [2]
+        assert body["grounding"]["status"] == "cited"
 
     def test_greeting_bypasses_retrieval(self):
         response = client.post(
@@ -379,6 +583,10 @@ class TestChat:
         assert body["sources"] == []
         assert body["grounding"]["status"] == "no_retrieval"
         assert body.get("metrics") is None
+        assert app.state.fake_llm.search_question_calls == []
+        assert app.state.fake_embedder.single_calls == []
+        assert app.state.fake_embedder.batch_calls == []
+        assert app.state.fake_store.search_calls == []
 
     def test_assistant_location_bypasses_retrieval(self):
         response = client.post(
@@ -480,3 +688,6 @@ class TestChat:
         body = response.json()
         assert body["results"][0]["chunk_id"] == "chunk-1"
         assert "vector" not in body["results"][0]
+        assert app.state.fake_llm.search_question_calls == []
+        assert app.state.fake_embedder.single_calls == ["test query"]
+        assert app.state.fake_store.search_calls[0]["query_text"] == "test query"
