@@ -33,6 +33,13 @@ SEARCH_QUESTIONS_SCHEMA = {
     "additionalProperties": False,
 }
 
+TITLE_SCHEMA = {
+    "type": "object",
+    "properties": {"title": {"type": "string"}},
+    "required": ["title"],
+    "additionalProperties": False,
+}
+
 _INVALID_RESPONSE_MESSAGE = (
     "I couldn't read a complete answer from the model. Please try again."
 )
@@ -263,6 +270,29 @@ class MockLlmGrpcClient:
     def __init__(self, target: str | None = None):
         self.target = target or get_settings().llm_grpc_url
 
+    def generate_title(self, query: str) -> str:
+        import json
+
+        import grpc
+
+        payload = {"operation": "generate_title", "prompt": query}
+        try:
+            with grpc.insecure_channel(self.target) as channel:
+                call = channel.unary_unary(
+                    "/rag.llm.LLM/Generate",
+                    request_serializer=lambda body: json.dumps(body).encode("utf-8"),
+                    response_deserializer=lambda body: json.loads(body.decode("utf-8")),
+                )
+                response = call(payload, timeout=5)
+            text_response = response.get("text") if isinstance(response, dict) else None
+            parsed = json.loads(text_response) if isinstance(text_response, str) else None
+            title = parsed.get("title") if isinstance(parsed, dict) else None
+            return title.strip() if isinstance(title, str) else ""
+        except grpc.RpcError:
+            raise
+        except Exception:
+            return ""
+
     def generate_response(
         self,
         prompt: str,
@@ -465,6 +495,78 @@ class VllmGrpcClient:
             ]
         )
 
+    def _render_title_prompt(self, query: str) -> str:
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "Create a concise, specific title for a chat conversation from "
+                    "the user's first message. Use a few words, preserve its topic, "
+                    "and return only JSON matching the required schema."
+                ),
+            },
+            {"role": "user", "content": f"First user message:\n{query}"},
+        ]
+        tokenizer = self._get_tokenizer()
+        if getattr(tokenizer, "chat_template", None):
+            return tokenizer.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=True,
+            )
+        return "\n\n".join(
+            [
+                f"System: {messages[0]['content']}",
+                f"User: {messages[1]['content']}",
+                "Assistant:",
+            ]
+        )
+
+    def generate_title(self, query: str) -> str:
+        import grpc
+
+        from rag_grpc.vllm_proto import vllm_engine_pb2, vllm_engine_pb2_grpc
+
+        try:
+            prompt_text = self._render_title_prompt(query)
+            request = vllm_engine_pb2.GenerateRequest(
+                request_id=f"rag-chat-title-{uuid.uuid4()}",
+                text=prompt_text,
+                sampling_params=vllm_engine_pb2.SamplingParams(
+                    temperature=0.1,
+                    max_tokens=24,
+                    json_schema=json.dumps(TITLE_SCHEMA),
+                ),
+                stream=False,
+            )
+            with grpc.insecure_channel(self.target) as channel:
+                stub = vllm_engine_pb2_grpc.VllmEngineStub(channel)
+                token_ids = []
+                completion = None
+                for response in stub.Generate(request, timeout=5):
+                    if response.HasField("complete"):
+                        completion = response.complete
+                        token_ids = list(response.complete.output_ids)
+                        break
+                    if response.HasField("chunk"):
+                        token_ids.extend(response.chunk.token_ids)
+            if (
+                completion is None
+                or str(getattr(completion, "finish_reason", "")).lower() != "stop"
+            ):
+                return ""
+            decoded = self._get_tokenizer().decode(
+                token_ids,
+                skip_special_tokens=True,
+            ).strip()
+            parsed = json.loads(decoded)
+            if not isinstance(parsed, dict) or set(parsed) != {"title"}:
+                return ""
+            title = parsed["title"]
+            return title.strip() if isinstance(title, str) else ""
+        except Exception:
+            return ""
+
     def generate_response(
         self,
         prompt: str,
@@ -598,6 +700,28 @@ class AutoLlmGrpcClient:
         self._mock_client = MockLlmGrpcClient(target)
         self._vllm_client = VllmGrpcClient(target, model)
         self._backend: str | None = None
+
+    def generate_title(self, query: str) -> str:
+        if self._backend == "mock":
+            return self._mock_client.generate_title(query)
+        if self._backend == "vllm":
+            return self._vllm_client.generate_title(query)
+
+        import grpc
+
+        try:
+            title = self._mock_client.generate_title(query)
+        except grpc.RpcError:
+            try:
+                title = self._vllm_client.generate_title(query)
+            except Exception:
+                return ""
+            self._backend = "vllm"
+            return title
+        except Exception:
+            return ""
+        self._backend = "mock"
+        return title
 
     def generate_response(
         self,

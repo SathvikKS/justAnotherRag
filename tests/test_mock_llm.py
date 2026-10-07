@@ -143,6 +143,90 @@ def _run_mock_response(monkeypatch, text):
     return MockLlmGrpcClient("127.0.0.1:50052").generate_response("question", [])
 
 
+def _run_vllm_title(
+    monkeypatch,
+    decoded,
+    *,
+    finish_reason="stop",
+    include_complete=True,
+    stream_error=False,
+):
+    requests = []
+    deadlines = []
+
+    class FakeTokenizer:
+        chat_template = None
+
+        def decode(self, token_ids, skip_special_tokens=True):
+            return decoded
+
+    class FakeGenerateRequest:
+        def __init__(self, **kwargs):
+            self.__dict__.update(kwargs)
+
+    class FakeSamplingParams:
+        def __init__(self, **kwargs):
+            self.__dict__.update(kwargs)
+
+    class FakeComplete:
+        output_ids = [1, 2, 3]
+
+        def __init__(self):
+            self.finish_reason = finish_reason
+
+    class FakeResponse:
+        def HasField(self, name):
+            return name == "complete"
+
+        complete = FakeComplete()
+
+    class FakeStub:
+        def __init__(self, channel):
+            self.channel = channel
+
+        def Generate(self, request, timeout=None):
+            requests.append(request)
+            deadlines.append(timeout)
+            if stream_error:
+                raise _FakeRpcError("generation failed")
+            return iter([FakeResponse()] if include_complete else [])
+
+    class FakeChannel:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setitem(
+        sys.modules,
+        "grpc",
+        types.SimpleNamespace(
+            insecure_channel=lambda target: FakeChannel(),
+            RpcError=_FakeRpcError,
+        ),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "rag_grpc.vllm_proto.vllm_engine_pb2",
+        types.SimpleNamespace(
+            GenerateRequest=FakeGenerateRequest,
+            SamplingParams=FakeSamplingParams,
+        ),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "rag_grpc.vllm_proto.vllm_engine_pb2_grpc",
+        types.SimpleNamespace(VllmEngineStub=FakeStub),
+    )
+
+    client = VllmGrpcClient.__new__(VllmGrpcClient)
+    client.target = "127.0.0.1:50051"
+    client._tokenizer = FakeTokenizer()
+    title = client.generate_title("How does vector search work?")
+    return title, requests[0], deadlines[0]
+
+
 def test_llm_provider_mock_selects_mock_client(monkeypatch):
     from rag_api import dependencies
     from rag_core.config import get_settings
@@ -192,6 +276,72 @@ def test_mock_llm_client_calls_mock_server():
         "metrics": None,
         "completion_status": "complete",
     }
+
+
+def test_mock_llm_client_generates_title_from_query(monkeypatch):
+    calls = []
+
+    class FakeCall:
+        def __call__(self, payload, timeout=None):
+            calls.append((payload, timeout))
+            return {"text": json.dumps({"title": "Vector Search Basics"})}
+
+    class FakeChannel:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def unary_unary(self, *args, **kwargs):
+            return FakeCall()
+
+    monkeypatch.setitem(
+        sys.modules,
+        "grpc",
+        types.SimpleNamespace(insecure_channel=lambda target: FakeChannel()),
+    )
+    title = MockLlmGrpcClient("127.0.0.1:50052").generate_title(
+        "How does vector search work with embeddings?"
+    )
+
+    assert title == "Vector Search Basics"
+    assert calls == [
+        (
+            {
+                "operation": "generate_title",
+                "prompt": "How does vector search work with embeddings?",
+            },
+            5,
+        )
+    ]
+
+
+@pytest.mark.parametrize("text", ["", "not json", '{"title": "   "}', '{"other": "x"}'])
+def test_mock_llm_client_returns_empty_title_for_invalid_output(monkeypatch, text):
+    class FakeCall:
+        def __call__(self, payload, timeout=None):
+            return {"text": text}
+
+    class FakeChannel:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def unary_unary(self, *args, **kwargs):
+            return FakeCall()
+
+    monkeypatch.setitem(
+        sys.modules,
+        "grpc",
+        types.SimpleNamespace(
+            insecure_channel=lambda target: FakeChannel(),
+            RpcError=_FakeRpcError,
+        ),
+    )
+    assert MockLlmGrpcClient("127.0.0.1:50052").generate_title("question") == ""
 
 
 def test_mock_llm_client_marks_malformed_json_invalid_and_salvages_answer(monkeypatch):
@@ -256,6 +406,77 @@ def test_auto_llm_client_uses_mock_backend_and_caches_selection():
     assert client.generate_response("question again", [])["answer"] == "mock"
     assert client._mock_client.calls == 2
     assert client._backend == "mock"
+
+
+def test_auto_llm_client_delegates_titles_to_selected_backend():
+    class FakeMockClient:
+        def __init__(self):
+            self.calls = []
+
+        def generate_title(self, query):
+            self.calls.append(query)
+            return "mock title"
+
+    class FailingVllmClient:
+        def generate_title(self, query):
+            raise AssertionError("selected mock backend should be retained")
+
+    client = AutoLlmGrpcClient.__new__(AutoLlmGrpcClient)
+    client._mock_client = FakeMockClient()
+    client._vllm_client = FailingVllmClient()
+    client._backend = "mock"
+
+    assert client.generate_title("question") == "mock title"
+    assert client._mock_client.calls == ["question"]
+
+
+def test_auto_llm_client_falls_back_to_vllm_for_title_on_mock_rpc_error(monkeypatch):
+    mock_calls = []
+
+    class FailingCall:
+        def __call__(self, payload, timeout=None):
+            mock_calls.append((payload, timeout))
+            raise _FakeRpcError("mock title operation unavailable")
+
+    class FakeChannel:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def unary_unary(self, *args, **kwargs):
+            return FailingCall()
+
+    monkeypatch.setitem(
+        sys.modules,
+        "grpc",
+        types.SimpleNamespace(
+            insecure_channel=lambda target: FakeChannel(),
+            RpcError=_FakeRpcError,
+        ),
+    )
+
+    class FakeVllmClient:
+        def __init__(self):
+            self.calls = 0
+
+        def generate_title(self, query):
+            self.calls += 1
+            return "vLLM title"
+
+    client = AutoLlmGrpcClient.__new__(AutoLlmGrpcClient)
+    client._mock_client = MockLlmGrpcClient("127.0.0.1:50052")
+    client._vllm_client = FakeVllmClient()
+    client._backend = None
+
+    assert client.generate_title("question") == "vLLM title"
+    assert client.generate_title("next question") == "vLLM title"
+    assert mock_calls == [
+        ({"operation": "generate_title", "prompt": "question"}, 5)
+    ]
+    assert client._vllm_client.calls == 2
+    assert client._backend == "vllm"
 
 
 def test_auto_llm_client_calls_mock_server():
@@ -398,6 +619,50 @@ def test_vllm_grpc_sampling_params_leave_output_limit_unset():
         json_schema="{}",
     )
     assert not params.HasField("max_tokens")
+
+
+def test_vllm_title_uses_structured_json_small_cap_and_deadline(monkeypatch):
+    title, request, deadline = _run_vllm_title(
+        monkeypatch,
+        json.dumps({"title": "Vector Search Basics"}),
+    )
+
+    assert title == "Vector Search Basics"
+    assert json.loads(request.sampling_params.json_schema) == {
+        "type": "object",
+        "properties": {"title": {"type": "string"}},
+        "required": ["title"],
+        "additionalProperties": False,
+    }
+    assert request.sampling_params.max_tokens == 24
+    assert deadline == 5
+    assert "concise" in request.text
+
+
+@pytest.mark.parametrize(
+    "decoded,finish_reason,include_complete,stream_error",
+    [
+        ("not json", "stop", True, False),
+        ('{"title": "  "}', "stop", True, False),
+        ('{"title": "partial"', "stop", True, False),
+        ('{"title": "partial"}', "length", True, False),
+        ('{"title": "partial"}', "stop", False, False),
+        ('{"title": "partial"}', "stop", True, True),
+    ],
+)
+def test_vllm_title_returns_empty_for_invalid_incomplete_or_failed_generation(
+    monkeypatch, decoded, finish_reason, include_complete, stream_error
+):
+    title, _, deadline = _run_vllm_title(
+        monkeypatch,
+        decoded,
+        finish_reason=finish_reason,
+        include_complete=include_complete,
+        stream_error=stream_error,
+    )
+
+    assert title == ""
+    assert deadline == 5
 
 
 def test_vllm_client_marks_length_finish_reason_truncated_even_for_valid_json(

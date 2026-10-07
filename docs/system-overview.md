@@ -158,7 +158,13 @@ sequenceDiagram
     User->>Web: Submits question in chat
     Web->>API: POST /chat (Bearer JWT, query, group_id, session_id, limit)
     API->>PG: Validates JWT token and checks session ownership
-    API->>PG: Loads last 4 conversation turns (PostgresChatMessageHistory)
+    API->>PG: Loads full session history (PostgresChatMessageHistory)
+    opt Provisional session title
+        API->>vLLM: Generate concise title from first user message
+        vLLM-->>API: Structured JSON title or failure
+        API->>PG: Persists generated title or first-words fallback
+    end
+    API->>API: Formats the last 4 conversation turns for answer context
 
     alt Query is Small Talk (e.g. "hi", "who are you")
         API->>API: Bypasses retrieval & LLM; generates friendly direct reply
@@ -186,7 +192,8 @@ sequenceDiagram
 
 1. **Authentication & Session Authorization**:
    - The client sends `POST /chat` with a Bearer JWT Token in the `Authorization` header.
-   - The API verifies the user in PostgreSQL and validates that the requested `session_id` belongs to them. If it is the first query in a session, the session title is automatically updated from the query.
+   - The API verifies the user in PostgreSQL and validates that the requested `session_id` belongs to them. On the first question, it asks the LLM for a concise session title; if title generation fails or returns unusable text, the API uses the first few words of the question so the title is never empty.
+   - The web client creates new sessions with a provisional `New chat` label, then refreshes the session list after the response to show the saved title. Session UUIDs identify conversations; display titles may repeat.
 2. **Conversation History**:
    - LangChain's `PostgresChatMessageHistory` loads recent message turns from PostgreSQL (`message_store` table).
    - The last 4 messages are formatted into a dialogue transcript (`User: ... \n Assistant: ...`) to provide the LLM with conversational context.

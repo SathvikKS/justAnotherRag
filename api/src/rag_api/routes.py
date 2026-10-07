@@ -28,6 +28,36 @@ from rag_core.interfaces import EmbeddingEngineBase, LLMClientBase, VectorStoreB
 
 router = APIRouter()
 
+_PROVISIONAL_SESSION_TITLES = {
+    "",
+    "untitled session",
+    "new chat",
+    "new conversation",
+}
+
+
+def _clean_session_title(value: object) -> str:
+    """Return a compact, one-line title suitable for a chat session."""
+    if not isinstance(value, str):
+        return ""
+
+    title = re.sub(r"\s+", " ", value.replace("\r", " ").replace("\n", " "))
+    title = title.strip().strip("\"'`*_# ")
+    title = re.sub(r"^(?:title\s*:\s*|[-*•]+\s*)", "", title, flags=re.IGNORECASE)
+    title = title.strip().strip("\"'`*_# ")
+
+    words: list[str] = []
+    for word in title.split():
+        candidate = " ".join((*words, word))
+        if len(words) >= 8 or len(candidate) > 80:
+            break
+        words.append(word)
+    return " ".join(words).rstrip(" ,.;:-")
+
+
+def _fallback_session_title(query: str) -> str:
+    return _clean_session_title(query) or "Conversation"
+
 
 class ChatRequest(BaseModel):
     query: str = Field(..., min_length=1)
@@ -685,12 +715,6 @@ def chat(
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    # Update session title dynamically on the first query
-    if not session.title or session.title == "Untitled Session":
-        session.title = payload.query[:40] + ("..." if len(payload.query) > 40 else "")
-        db.add(session)
-        db.commit()
-
     # Initialize LangChain history
     history = PostgresChatMessageHistory(
         "message_store",
@@ -698,8 +722,35 @@ def chat(
         sync_connection=db_conn
     )
 
-    # Fetch and trim history (last 4 messages starting with human query)
+    # Load full history before trimming so legacy/provisional sessions can be
+    # named from their original first user message.
     past_messages = history.messages
+
+    if (session.title or "").strip().lower() in _PROVISIONAL_SESSION_TITLES:
+        first_user_query = next(
+            (
+                message.content
+                for message in past_messages
+                if getattr(message, "type", "") == "human"
+                and isinstance(getattr(message, "content", None), str)
+                and message.content.strip()
+            ),
+            payload.query,
+        )
+        fallback_title = _fallback_session_title(first_user_query)
+        try:
+            generated_title = llm.generate_title(first_user_query)
+        except Exception:
+            generated_title = ""
+
+        title = _clean_session_title(generated_title)
+        if not title or title.lower() in _PROVISIONAL_SESSION_TITLES:
+            title = fallback_title
+        session.title = title or "Conversation"
+        db.add(session)
+        db.commit()
+
+    # Fetch and trim history (last 4 messages starting with human query)
     trimmed = past_messages[-4:]
     if trimmed and getattr(trimmed[0], "type", "") != "human":
         trimmed = trimmed[1:]

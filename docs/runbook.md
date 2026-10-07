@@ -191,6 +191,8 @@ rag_ingestion.tasks.process_document_task
 
 ## Upload And Chat
 
+The web client creates a chat session with a provisional `New chat` title. After the first question, the API asks the configured LLM for a concise title and falls back to the first few words of the question if generation fails or returns unusable text. The web client refreshes the session list after the response. Session UUIDs are the unique identifiers; duplicate display titles are allowed.
+
 Upload a PDF (`.pdf`) or Excel workbook (`.xlsx`, `.xlsm`). Legacy binary `.xls` files are rejected; save them as `.xlsx` or `.xlsm` first. The maximum file size is 50MB; larger uploads return `400 Bad Request` with `File size exceeds 50MB limit.`:
 
 ```powershell

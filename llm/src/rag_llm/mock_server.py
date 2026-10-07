@@ -15,7 +15,10 @@ def serve_mock_llm(port: int) -> grpc.Server:
     def generate(request: bytes, context: grpc.ServicerContext) -> bytes:
         body = json.loads(request.decode("utf-8"))
         prompt = body.get("prompt", "")
-        if body.get("operation") == "generate_search_questions":
+        if body.get("operation") == "generate_title":
+            words = prompt.strip().split()
+            response_dict = {"title": " ".join(words[:6]) or "Conversation"}
+        elif body.get("operation") == "generate_search_questions":
             response_dict = {
                 "questions": [
                     f"What are the main ideas related to {prompt}?",

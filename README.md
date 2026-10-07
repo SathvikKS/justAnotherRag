@@ -25,6 +25,8 @@ The root workspace environment is intentionally kept Windows-compatible for `api
 - Generate `/chat` answers through `llm_service` with a structured RAG prompt and tokenizer-native chat template rendering.
 - Register user accounts, log in via JWT bearer tokens, and isolate stateful chat sessions.
 - Persist chat session histories with grounding citations using LangChain Postgres memory.
+- Name each chat session from its first question with an LLM-generated concise title; if generation fails, use the first few words of the question. New sessions show a provisional `New chat` label until the first response updates the title.
+- Identify sessions by UUID, so separate sessions may have the same display title.
 - Query from the web client using a TanStack Router guarded interface in either `Ask AI` mode or direct `Search Vector DB` mode.
 - Bypass retrieval for simple greetings and return no sources.
 - List and permanently delete indexed files or whole groups without deleting the LanceDB directory.

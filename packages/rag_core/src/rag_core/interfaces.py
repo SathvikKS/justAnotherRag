@@ -74,6 +74,11 @@ class VectorStoreBase(ABC):
 
 class LLMClientBase(ABC):
     @abstractmethod
+    def generate_title(self, query: str) -> str:
+        """Generate a concise display title for a conversation."""
+        ...
+
+    @abstractmethod
     def generate_search_questions(self, query: str) -> list[str]:
         """Generate document-retrieval questions derived from a user query."""
         ...

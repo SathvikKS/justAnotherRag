@@ -196,7 +196,7 @@ export function ChatSection({ token }: ChatSectionProps) {
             setCurrentSessionId(data[0].id)
           }
         } else {
-          await createSession("New conversation")
+          await createSession("New chat")
         }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err)
@@ -225,7 +225,7 @@ export function ChatSection({ token }: ChatSectionProps) {
         } else {
           setCurrentSessionId(null)
           setMessages([])
-          await createSession("New conversation")
+          await createSession("New chat")
         }
       }
     } catch (err) {
@@ -314,7 +314,7 @@ export function ChatSection({ token }: ChatSectionProps) {
     let activeSessionId = currentSessionId
     if (queryMode === "chat") {
       if (!activeSessionId) {
-        activeSessionId = (await createSession(cleanQuery.slice(0, 30))) ?? null
+        activeSessionId = (await createSession("New chat")) ?? null
         if (!activeSessionId) return
       }
 

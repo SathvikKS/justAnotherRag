@@ -83,6 +83,7 @@ def mock_db_and_auth(monkeypatch):
         "rag_api.routes.PostgresChatMessageHistory",
         FakeChatMessageHistory,
     )
+    app.state.fake_histories = messages_by_session
 
     yield
 
@@ -96,6 +97,8 @@ def mock_db_and_auth(monkeypatch):
             os.remove("test.db")
         except OSError:
             pass
+    if hasattr(app.state, "fake_histories"):
+        delattr(app.state, "fake_histories")
 
 
 @pytest.fixture(autouse=True)
@@ -173,6 +176,8 @@ def fake_chat_dependencies():
     class FakeLLM:
         def __init__(self):
             self.search_question_calls = []
+            self.title_calls = []
+            self.title_result = "Generated session title"
             self.questions = [
                 "test query overview",
                 "test query details",
@@ -180,6 +185,12 @@ def fake_chat_dependencies():
                 "test query requirements",
                 "test query outcomes",
             ]
+
+        def generate_title(self, query):
+            self.title_calls.append(query)
+            if isinstance(self.title_result, Exception):
+                raise self.title_result
+            return self.title_result
 
         def generate_search_questions(self, query):
             self.search_question_calls.append(query)
@@ -385,6 +396,98 @@ class TestUpload:
 
 
 class TestChat:
+    @staticmethod
+    def create_session(title=None):
+        response = client.post("/chat/sessions", json={"title": title})
+        assert response.status_code == 200
+        return response.json()["id"]
+
+    @staticmethod
+    def title_for(session_id):
+        response = client.get("/chat/sessions")
+        assert response.status_code == 200
+        return next(item["title"] for item in response.json() if item["id"] == session_id)
+
+    @staticmethod
+    def send_chat(session_id, query="test query"):
+        return client.post(
+            "/chat",
+            json={"query": query, "group_id": "safe-id", "session_id": session_id},
+        )
+
+    def test_first_turn_persists_generated_title(self):
+        session_id = self.create_session()
+
+        response = self.send_chat(session_id)
+
+        assert response.status_code == 200
+        assert self.title_for(session_id) == "Generated session title"
+        assert app.state.fake_llm.title_calls == ["test query"]
+
+    def test_title_generation_failure_falls_back_to_first_query_words(self):
+        session_id = self.create_session()
+        app.state.fake_llm.title_result = RuntimeError("title generation unavailable")
+        app.state.fake_llm.generate_response = lambda *args, **kwargs: {
+            "answer": "generated answer",
+            "citations": [],
+            "insufficient": False,
+            "metrics": None,
+        }
+
+        response = self.send_chat(
+            session_id,
+            "Explain how vector retrieval ranks useful document chunks",
+        )
+
+        assert response.status_code == 200
+        assert self.title_for(session_id) == (
+            "Explain how vector retrieval ranks useful document chunks"
+        )
+
+    def test_small_talk_first_turn_still_gets_a_title(self):
+        session_id = self.create_session()
+
+        response = self.send_chat(session_id, "hello")
+
+        assert response.status_code == 200
+        assert self.title_for(session_id) == "Generated session title"
+        assert app.state.fake_llm.title_calls == ["hello"]
+
+    def test_follow_up_does_not_regenerate_or_overwrite_title(self):
+        session_id = self.create_session()
+
+        assert self.send_chat(session_id).status_code == 200
+        app.state.fake_llm.title_result = "Changed title"
+        assert self.send_chat(session_id).status_code == 200
+
+        assert self.title_for(session_id) == "Generated session title"
+        assert app.state.fake_llm.title_calls == ["test query"]
+
+    def test_explicit_title_is_preserved(self):
+        session_id = self.create_session("My chosen title")
+
+        response = self.send_chat(session_id)
+
+        assert response.status_code == 200
+        assert self.title_for(session_id) == "My chosen title"
+        assert app.state.fake_llm.title_calls == []
+
+    def test_provisional_legacy_history_uses_first_stored_user_message(self):
+        from langchain_core.messages import HumanMessage
+
+        session_id = self.create_session("New chat")
+        app.state.fake_histories.setdefault(session_id, []).append(
+            HumanMessage(content="Original question from an earlier turn")
+        )
+
+        response = self.send_chat(session_id)
+
+        assert response.status_code == 200
+        assert self.title_for(session_id) == "Generated session title"
+        assert app.state.fake_llm.title_calls == [
+            "Original question from an earlier turn"
+        ]
+
     def test_mcp_mount_requires_api_key_when_configured(self, monkeypatch):
         monkeypatch.setattr(app_module.settings, "api_key", "secret-key")
 
