@@ -76,6 +76,7 @@ export type ChatResponse = {
   query: string
   group_id: string
   answer: string
+  completion_status: CompletionStatus
   sources: Source[]
   grounding: Grounding
   metrics?: ChatMetrics | null
@@ -91,10 +92,14 @@ export type ChatMessage = {
   id: string
   role: "user" | "assistant"
   content: string
+  completion_status?: CompletionStatus
   sources?: Source[]
   grounding?: Grounding
   metrics?: ChatMetrics | null
 }
+
+export type CompletionStatus =
+  "complete" | "truncated" | "interrupted" | "invalid"
 
 export type QueryMode = "chat" | "search"
 

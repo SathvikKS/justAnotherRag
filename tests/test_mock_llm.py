@@ -4,10 +4,143 @@ import sys
 import types
 
 import grpc
+import pytest
 
 from rag_grpc import AutoLlmGrpcClient, MockLlmGrpcClient
 from rag_grpc.vllm_client import VllmGrpcClient
 from rag_llm.mock_server import serve_mock_llm
+
+
+class _FakeRpcError(Exception):
+    pass
+
+
+def _has_max_tokens(sampling_params):
+    if hasattr(sampling_params, "HasField"):
+        return sampling_params.HasField("max_tokens")
+    return "max_tokens" in vars(sampling_params)
+
+
+def _run_vllm_response(
+    monkeypatch,
+    decoded,
+    *,
+    finish_reason="stop",
+    include_complete=True,
+    chunk_token_ids=None,
+    stream_error=False,
+):
+    requests = []
+
+    class FakeTokenizer:
+        def encode(self, text):
+            return [101, 102]
+
+        def decode(self, token_ids, skip_special_tokens=True):
+            return decoded
+
+    class FakeGenerateRequest:
+        def __init__(self, **kwargs):
+            self.__dict__.update(kwargs)
+
+    class FakeSamplingParams:
+        def __init__(self, **kwargs):
+            self.__dict__.update(kwargs)
+
+    class FakeComplete:
+        def __init__(self):
+            self.output_ids = [1, 2, 3]
+            self.finish_reason = finish_reason
+
+        def __bool__(self):
+            return False
+
+    class FakeResponse:
+        def __init__(self, *, with_complete=False, with_chunk=False):
+            if with_complete:
+                self.complete = FakeComplete()
+            if with_chunk:
+                self.chunk = types.SimpleNamespace(token_ids=chunk_token_ids)
+
+        def HasField(self, name):
+            return hasattr(self, name)
+
+    class FakeStub:
+        def __init__(self, channel):
+            self.channel = channel
+
+        def Generate(self, request):
+            requests.append(request)
+
+            def frames():
+                if chunk_token_ids is not None:
+                    yield FakeResponse(with_chunk=True)
+                if stream_error:
+                    raise _FakeRpcError("generation stream interrupted")
+                if include_complete:
+                    yield FakeResponse(with_complete=True)
+
+            return frames()
+
+    class FakeChannel:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setitem(
+        sys.modules,
+        "grpc",
+        types.SimpleNamespace(
+            insecure_channel=lambda target: FakeChannel(),
+            RpcError=_FakeRpcError,
+        ),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "rag_grpc.vllm_proto.vllm_engine_pb2",
+        types.SimpleNamespace(
+            GenerateRequest=FakeGenerateRequest,
+            SamplingParams=FakeSamplingParams,
+        ),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "rag_grpc.vllm_proto.vllm_engine_pb2_grpc",
+        types.SimpleNamespace(VllmEngineStub=FakeStub),
+    )
+
+    client = VllmGrpcClient.__new__(VllmGrpcClient)
+    client.target = "127.0.0.1:50051"
+    client._tokenizer = FakeTokenizer()
+    client._render_prompt = lambda *args: "rendered prompt"
+
+    result = client.generate_response("What?", ["context"])
+    return result, requests[0]
+
+
+def _run_mock_response(monkeypatch, text):
+    class FakeCall:
+        def __call__(self, payload):
+            return {"text": text}
+
+    class FakeChannel:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def unary_unary(self, *args, **kwargs):
+            return FakeCall()
+
+    monkeypatch.setitem(
+        sys.modules,
+        "grpc",
+        types.SimpleNamespace(insecure_channel=lambda target: FakeChannel()),
+    )
+    return MockLlmGrpcClient("127.0.0.1:50052").generate_response("question", [])
 
 
 def test_llm_provider_mock_selects_mock_client(monkeypatch):
@@ -57,7 +190,30 @@ def test_mock_llm_client_calls_mock_server():
         "citations": [],
         "insufficient": False,
         "metrics": None,
+        "completion_status": "complete",
     }
+
+
+def test_mock_llm_client_marks_malformed_json_invalid_and_salvages_answer(monkeypatch):
+    result = _run_mock_response(
+        monkeypatch,
+        '{"answer":"A safe prefix \\"quoted\\" and \\\\path',
+    )
+
+    assert result["answer"] == 'A safe prefix "quoted" and \\path'
+    assert result["citations"] == []
+    assert result["insufficient"] is False
+    assert result["completion_status"] == "invalid"
+
+
+def test_mock_llm_client_does_not_expose_raw_json_when_no_answer_is_safe(monkeypatch):
+    raw_json = '{"citations":[1'
+    result = _run_mock_response(monkeypatch, raw_json)
+
+    assert result["completion_status"] == "invalid"
+    assert raw_json not in result["answer"]
+    assert result["citations"] == []
+    assert result["insufficient"] is False
 
 
 def test_mock_llm_client_generates_search_questions():
@@ -222,6 +378,199 @@ def test_auto_llm_client_expansion_falls_back_to_vllm_and_caches_backend():
     assert client._vllm_client.answers == 1
 
 
+def test_vllm_client_has_no_application_output_cap(monkeypatch):
+    monkeypatch.setattr(
+        "rag_grpc.vllm_client.get_settings",
+        lambda: types.SimpleNamespace(
+            llm_grpc_url="localhost:50052",
+            llm_model="example/model",
+        ),
+    )
+
+    assert not hasattr(VllmGrpcClient(), "max_tokens")
+
+
+def test_vllm_grpc_sampling_params_leave_output_limit_unset():
+    from rag_grpc.vllm_proto import vllm_engine_pb2
+
+    params = vllm_engine_pb2.SamplingParams(
+        temperature=0.2,
+        json_schema="{}",
+    )
+    assert not params.HasField("max_tokens")
+
+
+def test_vllm_client_marks_length_finish_reason_truncated_even_for_valid_json(
+    monkeypatch,
+):
+    result, request = _run_vllm_response(
+        monkeypatch,
+        json.dumps({"answer": "Partial answer", "citations": [1], "insufficient": False}),
+        finish_reason="length",
+    )
+
+    assert result["answer"] == "Partial answer"
+    assert result["citations"] == [1]
+    assert result["insufficient"] is False
+    assert result["completion_status"] == "truncated"
+    assert not _has_max_tokens(request.sampling_params)
+
+
+@pytest.mark.parametrize("finish_reason", ["", None, "unexpected"])
+def test_vllm_client_marks_unknown_finish_reason_interrupted(
+    monkeypatch, finish_reason
+):
+    result, _ = _run_vllm_response(
+        monkeypatch,
+        json.dumps({"answer": "Readable answer", "citations": [], "insufficient": False}),
+        finish_reason=finish_reason,
+    )
+
+    assert result["answer"] == "Readable answer"
+    assert result["completion_status"] == "interrupted"
+
+
+def test_vllm_client_salvages_escaped_answer_prefix_from_cut_json(monkeypatch):
+    result, _ = _run_vllm_response(
+        monkeypatch,
+        '{"answer":"Name: \\"East\\", path \\\\srv, emoji \\uD83D\\uDE42',
+        finish_reason="length",
+    )
+
+    assert result["answer"] == 'Name: "East", path \\srv, emoji 🙂'
+    assert result["citations"] == []
+    assert result["insufficient"] is False
+    assert result["completion_status"] == "truncated"
+
+
+def test_vllm_client_salvages_markdown_newlines_from_top_level_answer(monkeypatch):
+    answer = "| Item | Price |\n| --- | --- |\n| Paper | $3 |"
+    decoded = (
+        '{"metadata":{"answer":"misleading nested value"},"answer":'
+        f'{json.dumps(answer)},"citations":['
+    )
+
+    result, _ = _run_vllm_response(
+        monkeypatch,
+        decoded,
+        finish_reason="length",
+    )
+
+    assert result["answer"] == answer
+    assert "\n| --- | --- |\n" in result["answer"]
+    assert "misleading nested value" not in result["answer"]
+    assert not result["answer"].startswith("{")
+    assert result["completion_status"] == "truncated"
+
+
+def test_vllm_client_drops_partial_unicode_escape_from_salvaged_answer(monkeypatch):
+    result, _ = _run_vllm_response(
+        monkeypatch,
+        '{"answer":"Before emoji \\uD83D\\uD',
+        finish_reason="length",
+    )
+
+    assert result["answer"] == "Before emoji "
+    assert result["completion_status"] == "truncated"
+
+
+def test_vllm_client_marks_missing_final_frame_interrupted(monkeypatch):
+    result, _ = _run_vllm_response(
+        monkeypatch,
+        json.dumps({"answer": "Readable prefix", "citations": [1], "insufficient": False}),
+        include_complete=False,
+        chunk_token_ids=[1, 2, 3],
+    )
+
+    assert result["answer"] == "Readable prefix"
+    assert result["completion_status"] == "interrupted"
+
+
+def test_vllm_client_keeps_partial_answer_when_grpc_stream_raises(monkeypatch):
+    result, _ = _run_vllm_response(
+        monkeypatch,
+        '{"answer":"Readable partial answer',
+        chunk_token_ids=[1, 2, 3],
+        stream_error=True,
+    )
+
+    assert result["answer"] == "Readable partial answer"
+    assert result["citations"] == []
+    assert result["insufficient"] is False
+    assert result["completion_status"] == "interrupted"
+
+
+def test_vllm_client_propagates_stream_error_before_any_tokens(
+    monkeypatch,
+):
+    with pytest.raises(_FakeRpcError, match="generation stream interrupted"):
+        _run_vllm_response(
+            monkeypatch,
+            "",
+            stream_error=True,
+        )
+
+
+def test_vllm_client_rejects_schema_invalid_citations_without_synthesizing_fields(
+    monkeypatch,
+):
+    result, _ = _run_vllm_response(
+        monkeypatch,
+        json.dumps({"answer": "Readable answer", "citations": [1, True], "insufficient": True}),
+    )
+
+    assert result["answer"] == "Readable answer"
+    assert result["citations"] == []
+    assert result["insufficient"] is False
+    assert result["completion_status"] == "invalid"
+
+
+def test_vllm_client_rejects_lone_surrogate_and_returns_safe_answer_prefix(
+    monkeypatch,
+):
+    result, _ = _run_vllm_response(
+        monkeypatch,
+        r'{"answer":"prefix \ud800","citations":[],"insufficient":false}',
+    )
+
+    assert result["answer"] == "prefix "
+    assert not any(0xD800 <= ord(char) <= 0xDFFF for char in result["answer"])
+    assert result["completion_status"] == "invalid"
+
+
+def test_vllm_client_drops_raw_lone_surrogate_from_salvaged_answer(monkeypatch):
+    raw_surrogate = chr(0xD800)
+    result, _ = _run_vllm_response(
+        monkeypatch,
+        '{"answer":"prefix ' + raw_surrogate + 'tail',
+        finish_reason="length",
+    )
+
+    assert result["answer"] == "prefix "
+    assert not any(0xD800 <= ord(char) <= 0xDFFF for char in result["answer"])
+    assert result["completion_status"] == "truncated"
+
+
+def test_vllm_client_normalizes_valid_surrogate_pair(monkeypatch):
+    result, _ = _run_vllm_response(
+        monkeypatch,
+        r'{"answer":"emoji \ud83d\ude42","citations":[],"insufficient":false}',
+    )
+
+    assert result["answer"] == "emoji 🙂"
+    assert result["completion_status"] == "complete"
+
+
+def test_vllm_client_hides_unrecoverable_raw_json(monkeypatch):
+    raw_json = '{"citations":[1'
+    result, _ = _run_vllm_response(monkeypatch, raw_json)
+
+    assert result["completion_status"] == "invalid"
+    assert raw_json not in result["answer"]
+    assert result["citations"] == []
+    assert result["insufficient"] is False
+
+
 def test_vllm_client_uses_tokenizer_chat_template():
     class FakeTokenizer:
         chat_template = "template"
@@ -290,7 +639,9 @@ def test_vllm_client_generates_unique_request_ids(monkeypatch):
 
     class FakeResponse:
         def __init__(self):
-            self.complete = types.SimpleNamespace(output_ids=[1, 2, 3])
+            self.complete = types.SimpleNamespace(
+                output_ids=[1, 2, 3], finish_reason="stop"
+            )
 
         def HasField(self, name):
             return name == "complete"
@@ -331,7 +682,6 @@ def test_vllm_client_generates_unique_request_ids(monkeypatch):
 
     client = VllmGrpcClient.__new__(VllmGrpcClient)
     client.target = "127.0.0.1:50051"
-    client.max_tokens = 16
     client._tokenizer = FakeTokenizer()
     client._render_prompt = lambda *args: "rendered prompt"
 
@@ -418,13 +768,13 @@ def test_vllm_client_generates_search_questions_with_separate_schema(monkeypatch
 
     client = VllmGrpcClient.__new__(VllmGrpcClient)
     client.target = "127.0.0.1:50051"
-    client.max_tokens = 16
     client._tokenizer = FakeTokenizer()
 
     assert client.generate_search_questions("How does vector search work?") == [
         "first?", "second?", "third?", "fourth?", "fifth?",
     ]
     assert requests[0].text == "expanded query prompt"
+    assert not _has_max_tokens(requests[0].sampling_params)
     assert requests[0].sampling_params.json_schema == json.dumps(
         {
             "type": "object",
@@ -468,7 +818,9 @@ def test_vllm_client_reports_metrics(monkeypatch):
 
     class FakeResponse:
         def __init__(self):
-            self.complete = types.SimpleNamespace(output_ids=[1, 2, 3])
+            self.complete = types.SimpleNamespace(
+                output_ids=[1, 2, 3], finish_reason="stop"
+            )
 
         def HasField(self, name):
             return name == "complete"
@@ -514,7 +866,6 @@ def test_vllm_client_reports_metrics(monkeypatch):
 
     client = VllmGrpcClient.__new__(VllmGrpcClient)
     client.target = "127.0.0.1:50051"
-    client.max_tokens = 16
     client._tokenizer = FakeTokenizer()
     client._render_prompt = lambda *args: "rendered prompt"
 
@@ -530,4 +881,5 @@ def test_vllm_client_reports_metrics(monkeypatch):
             "completion_tokens": 3,
             "total_context_used": 7,
         },
+        "completion_status": "complete",
     }

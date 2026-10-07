@@ -89,7 +89,7 @@ Settings:
 - `LANCEDB_URI`, `LANCEDB_TABLE`
 - `EMBEDDING_MODEL`, `EMBEDDING_GRPC_URL`
 - `DOCLING_OCR_ENABLED`, `DOCLING_OCR_ENGINE`, `DOCLING_OCR_LANGS`, `DOCLING_RAPIDOCR_BACKEND`, `DOCLING_FORCE_BACKEND_TEXT`, `DOCLING_WARMUP_ENABLED`
-- `LLM_PROVIDER`, `LLM_GRPC_URL`, `LLM_MODEL`, `LLM_MAX_TOKENS`, `VLLM_GPU_MEMORY_UTIL`, `VLLM_MAX_MODEL_LEN`
+- `LLM_PROVIDER`, `LLM_GRPC_URL`, `LLM_MODEL`, `VLLM_GPU_MEMORY_UTIL`, `VLLM_MAX_MODEL_LEN`
 - `CELERY_BROKER_URL`, `CELERY_RESULT_BACKEND`
 - `API_KEY`
 - `CORS_ORIGINS`
@@ -100,6 +100,10 @@ For S3-compatible LanceDB storage, shared settings add the LanceDB `allow_http='
 `EMBEDDING_MODEL` must produce 384-dimensional vectors unless the LanceDB schema is changed. The current implementation still uses `BAAI/bge-small-en-v1.5`, now through LangChain's Hugging Face embeddings wrapper, to keep query and indexed vectors compatible.
 
 `VLLM_GPU_MEMORY_UTIL` is read by `llm/src/rag_llm/serve.py` and passed to vLLM as `--gpu-memory-utilization`; the default is `0.88`. `VLLM_MAX_MODEL_LEN`, when set, is passed as `--max-model-len`. Leave it unset to use the model's native context length. On a 16GB GPU, Qwen3-4B's native 40960-token length needs more KV cache than utilization `0.75` leaves (about 3.7 GiB); `16384` fits that budget. Both launcher variables are removed from the vLLM process environment so vLLM does not warn about unknown `VLLM_*` names.
+
+The API does not set a separate per-request output limit for answer or search-question generation. vLLM uses the remaining context capacity (`max_model_len` minus prompt tokens) as the maximum completion length, and may stop earlier at an end-of-sequence token. `VLLM_MAX_MODEL_LEN` in `llm/.env` caps the combined prompt and completion context length.
+
+The `/chat` response and persisted assistant turn include `completion_status`: `complete`, `truncated`, `interrupted`, or `invalid`. `truncated` records a `length` finish reason even when the final JSON is syntactically valid. `interrupted` means no final completion frame arrived. `invalid` means a final frame arrived but its JSON or required schema was invalid. For non-complete results, the server extracts only a safely decoded top-level answer prefix from malformed JSON and never invents citations; if no text can be recovered, it returns a short fallback. Citation enforcement rejects incomplete answers with a distinct verifiability fallback while preserving the status. The status persists in history, the UI shows an inline notice in live and reloaded conversations, and later prompts mark such assistant history as incomplete.
 
 `LLM_PROVIDER` accepts `mock`, `vllm`, or `auto`. The ServiceLauncher profiles set the shared API to `auto`; it first tries the mock gRPC contract and falls back to the vLLM contract on the same endpoint.
 

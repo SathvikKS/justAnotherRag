@@ -62,9 +62,11 @@ def mock_db_and_auth(monkeypatch):
     app.dependency_overrides[get_current_user] = lambda db=Depends(get_session): db.query(User).first()
     app.dependency_overrides[get_psycopg_conn] = lambda: MagicMock()
 
+    messages_by_session = {}
+
     class FakeChatMessageHistory:
         def __init__(self, table_name, session_id, sync_connection=None):
-            self.messages = []
+            self.messages = messages_by_session.setdefault(session_id, [])
 
         def add_message(self, message):
             self.messages.append(message)
@@ -454,6 +456,7 @@ class TestChat:
         assert body["sources"][0]["score"] == 0.9
         assert body["grounding"]["status"] == "uncited"
         assert body["grounding"]["citations_required"] is False
+        assert body["completion_status"] == "complete"
         assert body["metrics"] == {
             "session_tps": 12.5,
             "prompt_tokens": 128,
@@ -475,6 +478,92 @@ class TestChat:
             "test query requirements",
             "test query outcomes",
         ]]
+
+    def test_partial_answer_status_survives_history_and_marks_followup_context(self):
+        histories = []
+
+        def partial_response(prompt, context, require_citations=False, history=""):
+            histories.append(history)
+            return {
+                "answer": "| Item | Stock |\n| --- | --- |\n| A | 2 |",
+                "citations": [],
+                "insufficient": False,
+                "completion_status": "truncated",
+                "metrics": None,
+            }
+
+        app.state.fake_llm.generate_response = partial_response
+        payload = {
+            "query": "test query",
+            "group_id": "safe-id",
+            "expand_query": False,
+        }
+        response = client.post("/chat", json=payload)
+        assert response.status_code == 200
+        assert response.json()["completion_status"] == "truncated"
+        assert response.json()["answer"].startswith("| Item | Stock |")
+
+        saved = client.get(
+            "/chat/sessions/11111111-1111-1111-1111-111111111111/messages"
+        )
+        assert saved.status_code == 200
+        assert saved.json()[1]["completion_status"] == "truncated"
+        assert saved.json()[1]["content"] == response.json()["answer"]
+
+        followup = client.post("/chat", json=payload)
+        assert followup.status_code == 200
+        assert histories[0] == ""
+        assert "Assistant (incomplete response): | Item | Stock |" in histories[1]
+
+    def test_required_citations_rejects_partial_answer_with_distinct_status(self):
+        def partial_response(prompt, context, require_citations=False, history=""):
+            assert require_citations is True
+            return {
+                "answer": "Unfinished table row",
+                "citations": [1],
+                "insufficient": False,
+                "completion_status": "truncated",
+                "metrics": None,
+            }
+
+        app.state.fake_llm.generate_response = partial_response
+        response = client.post(
+            "/chat",
+            json={
+                "query": "test query",
+                "group_id": "safe-id",
+                "expand_query": False,
+                "require_citations": True,
+            },
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["completion_status"] == "truncated"
+        assert body["answer"] == "I couldn't complete a verifiable answer. Please try again."
+        assert body["grounding"]["status"] == "rejected_incomplete"
+        assert body["grounding"]["raw_answer"] == "Unfinished table row"
+
+        saved = client.get(
+            "/chat/sessions/11111111-1111-1111-1111-111111111111/messages"
+        )
+        assert saved.status_code == 200
+        assert saved.json()[1]["completion_status"] == "truncated"
+
+    def test_legacy_history_does_not_claim_completion(self):
+        from langchain_core.messages import AIMessage
+        from rag_api.routes import PostgresChatMessageHistory
+
+        history = PostgresChatMessageHistory(
+            "message_store", "11111111-1111-1111-1111-111111111111"
+        )
+        history.add_message(AIMessage(content="Older answer"))
+
+        saved = client.get(
+            "/chat/sessions/11111111-1111-1111-1111-111111111111/messages"
+        )
+        assert saved.status_code == 200
+        assert saved.json()[0]["content"] == "Older answer"
+        assert "completion_status" not in saved.json()[0]
 
     def test_expansion_can_be_disabled(self):
         response = client.post(

@@ -19,6 +19,8 @@ Each service reads `.env` from its own current directory. API and ingestion also
 - `embedding/.env.example` -> `embedding/.env`
 - `llm/.env.example` -> `llm/.env`
 
+`VLLM_MAX_MODEL_LEN` belongs in `llm/.env` and limits the combined prompt and completion context window, not just generated output. The API does not set a separate output cap: vLLM can generate up to the context capacity remaining after the prompt, or stop earlier at an end-of-sequence token. Restart the LLM service after changing `VLLM_MAX_MODEL_LEN`.
+
 Shared values that must match:
 
 ```env
@@ -35,7 +37,6 @@ DOCLING_WARMUP_ENABLED=true
 LLM_PROVIDER=mock
 LLM_GRPC_URL=localhost:50052
 LLM_MODEL=Qwen/Qwen2.5-3B-Instruct
-LLM_MAX_TOKENS=512
 VLLM_GPU_MEMORY_UTIL=0.88
 VLLM_MAX_MODEL_LEN=16384
 CELERY_BROKER_URL=redis://localhost:6379/0
@@ -248,6 +249,7 @@ Mounted MCP tools:
 Greeting and assistant small-talk queries such as `hi`, `who are you`, and `where are you` bypass retrieval and return no sources.
 
 The web query panel has `Ask AI` and `Search Vector DB` tabs. `Ask AI` calls `/chat` and shows grounding badges on assistant messages. `Search Vector DB` calls `/debug/search` and shows ranked retrieval hits without LLM generation. Query responses omit vectors and empty optional fields to keep payloads small. Query settings let users choose the per-question retrieval limit (`5` by default), toggle search-question generation (on by default for AI requests), and toggle citation enforcement. With generation on, `/chat` asks the LLM for up to five questions derived from the user's query, retrieves up to the selected limit for each, then deduplicates the merged results before the final answer call. The original query remains the final answer prompt. If question generation fails or returns no usable questions, retrieval uses the original query. Candidate retrieval can reach five times the limit before deduplication; this adds an LLM call and can increase latency and final prompt context size. The setting is disabled in Search mode. `/debug/search` and MCP `search_knowledge_base` continue direct single-query retrieval. The prompt always asks for `[n]` citations on document-backed answers; enforcement only decides whether uncited answers are accepted or rejected. Document-backed answers are labelled `Cited` or `Uncited` based on whether valid citations were found. When citation enforcement is on, uncited document answers are replaced with `I don't have enough information in the provided documents.` and the raw rejected answer is available in an expandable debug panel. `No document sources supplied` means the answer did not use retrieved chunks.
+Assistant messages also carry `completion_status`: `complete`, `truncated`, `interrupted`, or `invalid`. `truncated` means generation hit its token limit, even if the JSON parsed; `interrupted` means the server did not receive a final completion frame; `invalid` means a final frame arrived but its JSON or required shape was malformed. For non-complete results, the server may recover a safely decoded top-level answer prefix, but never fabricates citations; when no answer text is recoverable it returns a short fallback. The status is saved with the assistant message, shown as an inline notice in live chat and after reload, and included in later prompts so partial answers are treated as incomplete. Citation enforcement uses a distinct verifiability fallback for incomplete answers while retaining their status.
 
 List indexed groups:
 

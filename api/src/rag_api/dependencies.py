@@ -36,6 +36,5 @@ def get_llm_client() -> LLMClientBase:
         return AutoLlmGrpcClient(
             settings.llm_grpc_url,
             settings.llm_model,
-            settings.llm_max_tokens,
         )
     return VllmGrpcClient()

@@ -1,10 +1,9 @@
-import uuid
+import json
 import time
+import uuid
 
 from rag_core.config import get_settings
 
-
-import json
 
 LLM_RESPONSE_SCHEMA = {
     "type": "object",
@@ -33,6 +32,231 @@ SEARCH_QUESTIONS_SCHEMA = {
     "required": ["questions"],
     "additionalProperties": False,
 }
+
+_INVALID_RESPONSE_MESSAGE = (
+    "I couldn't read a complete answer from the model. Please try again."
+)
+_TRUNCATED_RESPONSE_MESSAGE = "The response was cut off before a complete answer was produced."
+_INTERRUPTED_RESPONSE_MESSAGE = "The response ended before completion. Please try again."
+
+
+def _response_result(
+    answer: str,
+    citations: list[int] | None = None,
+    insufficient: bool = False,
+    metrics: dict | None = None,
+    completion_status: str = "complete",
+) -> dict:
+    return {
+        "answer": answer,
+        "citations": citations or [],
+        "insufficient": insufficient,
+        "metrics": metrics,
+        "completion_status": completion_status,
+    }
+
+
+def _decode_json_string_prefix(text: str, start: int) -> str:
+    """Decode a JSON string from its opening quote, preserving a safe prefix.
+
+    A truncated escape or surrogate pair ends extraction at the preceding valid
+    text. This deliberately does not invent a closing quote or other JSON syntax.
+    """
+    decoded: list[str] = []
+    index = start + 1
+    simple_escapes = {
+        '"': '"',
+        "\\": "\\",
+        "/": "/",
+        "b": "\b",
+        "f": "\f",
+        "n": "\n",
+        "r": "\r",
+        "t": "\t",
+    }
+
+    while index < len(text):
+        char = text[index]
+        if char == '"':
+            return "".join(decoded)
+        if char == "\\":
+            if index + 1 >= len(text):
+                break
+            escaped = text[index + 1]
+            if escaped in simple_escapes:
+                decoded.append(simple_escapes[escaped])
+                index += 2
+                continue
+            if escaped != "u":
+                break
+
+            hex_digits = text[index + 2:index + 6]
+            if len(hex_digits) != 4 or any(
+                digit not in "0123456789abcdefABCDEF" for digit in hex_digits
+            ):
+                break
+            codepoint = int(hex_digits, 16)
+            if 0xD800 <= codepoint <= 0xDBFF:
+                # JSON encodes non-BMP characters as a high/low surrogate pair.
+                low_start = index + 6
+                low_digits = text[low_start + 2:low_start + 6]
+                if (
+                    text[low_start:low_start + 2] != "\\u"
+                    or len(low_digits) != 4
+                    or any(
+                        digit not in "0123456789abcdefABCDEF"
+                        for digit in low_digits
+                    )
+                ):
+                    break
+                low_codepoint = int(low_digits, 16)
+                if not 0xDC00 <= low_codepoint <= 0xDFFF:
+                    break
+                combined = 0x10000 + ((codepoint - 0xD800) << 10) + (
+                    low_codepoint - 0xDC00
+                )
+                decoded.append(chr(combined))
+                index = low_start + 6
+                continue
+            if 0xDC00 <= codepoint <= 0xDFFF:
+                break
+            decoded.append(chr(codepoint))
+            index += 6
+            continue
+
+        codepoint = ord(char)
+        if codepoint < 0x20 or 0xD800 <= codepoint <= 0xDFFF:
+            break
+        decoded.append(char)
+        index += 1
+
+    return "".join(decoded)
+
+
+def _extract_top_level_answer_prefix(text: str) -> str | None:
+    """Extract only a top-level answer string from a partial JSON object."""
+    index = 0
+    while index < len(text) and text[index].isspace():
+        index += 1
+    if index >= len(text) or text[index] != "{":
+        return None
+    index += 1
+    decoder = json.JSONDecoder()
+
+    while index < len(text):
+        while index < len(text) and text[index].isspace():
+            index += 1
+        if index >= len(text) or text[index] == "}":
+            return None
+        if text[index] != '"':
+            return None
+        try:
+            key, key_end = decoder.raw_decode(text, index)
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(key, str):
+            return None
+        index = key_end
+        while index < len(text) and text[index].isspace():
+            index += 1
+        if index >= len(text) or text[index] != ":":
+            return None
+        index += 1
+        while index < len(text) and text[index].isspace():
+            index += 1
+
+        if key == "answer":
+            if index >= len(text) or text[index] != '"':
+                return None
+            answer = _decode_json_string_prefix(text, index)
+            return answer if answer.strip() else None
+
+        try:
+            _, index = decoder.raw_decode(text, index)
+        except json.JSONDecodeError:
+            return None
+        while index < len(text) and text[index].isspace():
+            index += 1
+        if index >= len(text) or text[index] != ",":
+            return None
+        index += 1
+
+    return None
+
+
+def _normalize_unicode_scalars(value: str) -> str | None:
+    """Convert valid surrogate pairs and reject unpaired surrogate code points."""
+    normalized: list[str] = []
+    index = 0
+    while index < len(value):
+        codepoint = ord(value[index])
+        if 0xD800 <= codepoint <= 0xDBFF:
+            if index + 1 >= len(value):
+                return None
+            low_codepoint = ord(value[index + 1])
+            if not 0xDC00 <= low_codepoint <= 0xDFFF:
+                return None
+            combined = 0x10000 + ((codepoint - 0xD800) << 10) + (
+                low_codepoint - 0xDC00
+            )
+            normalized.append(chr(combined))
+            index += 2
+            continue
+        if 0xDC00 <= codepoint <= 0xDFFF:
+            return None
+        normalized.append(value[index])
+        index += 1
+    return "".join(normalized)
+
+
+def _validated_response_payload(
+    decoded: str, context: list[str]
+) -> tuple[dict | None, str | None]:
+    """Return a schema-valid payload and/or a safely recovered answer string."""
+    try:
+        parsed = json.loads(decoded)
+    except json.JSONDecodeError:
+        return None, _extract_top_level_answer_prefix(decoded)
+
+    if not isinstance(parsed, dict):
+        return None, None
+
+    answer_value = parsed.get("answer")
+    answer = (
+        _normalize_unicode_scalars(answer_value)
+        if isinstance(answer_value, str)
+        else None
+    )
+    safe_answer = answer or _extract_top_level_answer_prefix(decoded)
+    required_keys = {"answer", "citations", "insufficient"}
+    if set(parsed) != required_keys:
+        return None, safe_answer
+    citations_value = parsed["citations"]
+    if (
+        not isinstance(citations_value, list)
+        or any(type(citation) is not int for citation in citations_value)
+        or answer is None
+        or not isinstance(parsed["insufficient"], bool)
+    ):
+        return None, safe_answer
+
+    citations = sorted({
+        citation for citation in citations_value
+        if 1 <= citation <= len(context)
+    })
+    return {
+        "answer": answer,
+        "citations": citations,
+        "insufficient": parsed["insufficient"],
+    }, answer
+
+
+def _incomplete_answer(status: str) -> str:
+    if status == "truncated":
+        return _TRUNCATED_RESPONSE_MESSAGE
+    if status == "interrupted":
+        return _INTERRUPTED_RESPONSE_MESSAGE
+    return _INVALID_RESPONSE_MESSAGE
 
 
 class MockLlmGrpcClient:
@@ -63,17 +287,40 @@ class MockLlmGrpcClient:
                 response_deserializer=lambda body: json.loads(body.decode("utf-8")),
             )
             response = call(payload)
-        text_response = str(response["text"]).strip()
+        text_response = response.get("text") if isinstance(response, dict) else None
+        if not isinstance(text_response, str):
+            return _response_result(
+                _INVALID_RESPONSE_MESSAGE,
+                completion_status="invalid",
+            )
+        text_response = text_response.strip()
+        if not text_response:
+            return _response_result(
+                _incomplete_answer("invalid"),
+                completion_status="invalid",
+            )
         try:
             parsed = json.loads(text_response)
         except json.JSONDecodeError:
-            parsed = {
-                "answer": text_response,
-                "citations": [],
-                "insufficient": False,
-            }
-        parsed.setdefault("metrics", None)
-        return parsed
+            # The mock gRPC contract normally returns plain answer text. Treat
+            # JSON-looking output as a malformed structured response instead.
+            if text_response.startswith(("{", "[")):
+                partial_answer = _extract_top_level_answer_prefix(text_response)
+                return _response_result(
+                    partial_answer or _incomplete_answer("invalid"),
+                    completion_status="invalid",
+                )
+            return _response_result(text_response)
+
+        valid_payload, safe_answer = _validated_response_payload(
+            text_response, context
+        )
+        if valid_payload is None:
+            return _response_result(
+                safe_answer or _incomplete_answer("invalid"),
+                completion_status="invalid",
+            )
+        return _response_result(**valid_payload)
 
     def generate_search_questions(self, query: str) -> list[str]:
         import json
@@ -103,12 +350,10 @@ class VllmGrpcClient:
         self,
         target: str | None = None,
         model: str | None = None,
-        max_tokens: int | None = None,
     ):
         settings = get_settings()
         self.target = target or settings.llm_grpc_url
         self.model = model or settings.llm_model
-        self.max_tokens = max_tokens or settings.llm_max_tokens
         self._tokenizer = None
 
     def _get_tokenizer(self):
@@ -238,7 +483,6 @@ class VllmGrpcClient:
             request_id=f"rag-chat-{uuid.uuid4()}",
             text=prompt_text,
             sampling_params=vllm_engine_pb2.SamplingParams(
-                max_tokens=self.max_tokens,
                 temperature=0.2,
                 json_schema=json.dumps(LLM_RESPONSE_SCHEMA),
             ),
@@ -248,12 +492,22 @@ class VllmGrpcClient:
         with grpc.insecure_channel(self.target) as channel:
             stub = vllm_engine_pb2_grpc.VllmEngineStub(channel)
             token_ids = []
-            for response in stub.Generate(request):
-                if response.HasField("complete"):
-                    token_ids = list(response.complete.output_ids)
-                    break
-                if response.HasField("chunk"):
-                    token_ids.extend(response.chunk.token_ids)
+            completion = None
+            received_output_chunk = False
+            try:
+                for response in stub.Generate(request):
+                    if response.HasField("complete"):
+                        completion = response.complete
+                        token_ids = list(response.complete.output_ids)
+                        break
+                    if response.HasField("chunk"):
+                        received_output_chunk = True
+                        token_ids.extend(response.chunk.token_ids)
+            except grpc.RpcError:
+                # Keep chunks already received, but do not claim completion
+                # unless the final frame arrived.
+                if not received_output_chunk:
+                    raise
         elapsed_seconds = time.perf_counter() - started_at
         completion_token_count = len(token_ids)
         metrics = {
@@ -264,35 +518,37 @@ class VllmGrpcClient:
             "completion_tokens": completion_token_count,
             "total_context_used": prompt_token_count + completion_token_count,
         }
-        if not token_ids:
-            return {
-                "answer": "",
-                "citations": [],
-                "insufficient": True,
-                "metrics": metrics,
-            }
-        decoded = tokenizer.decode(token_ids, skip_special_tokens=True).strip()
-        try:
-            parsed = json.loads(decoded)
-        except json.JSONDecodeError:
-            return {
-                "answer": decoded,
-                "citations": [],
-                "insufficient": True,
-                "metrics": metrics,
-            }
+        finish_reason = (
+            getattr(completion, "finish_reason", "")
+            if completion is not None
+            else ""
+        )
+        if completion is None:
+            completion_status = "interrupted"
+        elif str(finish_reason).lower() == "length":
+            completion_status = "truncated"
+        elif str(finish_reason).lower() == "stop":
+            completion_status = "complete"
+        else:
+            completion_status = "interrupted"
 
-        citations = sorted({
-            int(citation)
-            for citation in parsed.get("citations", [])
-            if 1 <= int(citation) <= len(context)
-        })
-        return {
-            "answer": parsed.get("answer", ""),
-            "citations": citations,
-            "insufficient": parsed.get("insufficient", False),
-            "metrics": metrics,
-        }
+        decoded = tokenizer.decode(token_ids, skip_special_tokens=True).strip()
+        valid_payload, safe_answer = _validated_response_payload(decoded, context)
+        if completion_status == "complete" and valid_payload is None:
+            completion_status = "invalid"
+
+        if valid_payload is not None:
+            return _response_result(
+                **valid_payload,
+                metrics=metrics,
+                completion_status=completion_status,
+            )
+
+        return _response_result(
+            safe_answer or _incomplete_answer(completion_status),
+            metrics=metrics,
+            completion_status=completion_status,
+        )
 
     def generate_search_questions(self, query: str) -> list[str]:
         import grpc
@@ -305,7 +561,6 @@ class VllmGrpcClient:
             request_id=f"rag-query-expansion-{uuid.uuid4()}",
             text=prompt_text,
             sampling_params=vllm_engine_pb2.SamplingParams(
-                max_tokens=self.max_tokens,
                 temperature=0.2,
                 json_schema=json.dumps(SEARCH_QUESTIONS_SCHEMA),
             ),
@@ -339,10 +594,9 @@ class AutoLlmGrpcClient:
         self,
         target: str | None = None,
         model: str | None = None,
-        max_tokens: int | None = None,
     ):
         self._mock_client = MockLlmGrpcClient(target)
-        self._vllm_client = VllmGrpcClient(target, model, max_tokens)
+        self._vllm_client = VllmGrpcClient(target, model)
         self._backend: str | None = None
 
     def generate_response(

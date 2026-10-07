@@ -46,13 +46,80 @@ import type {
   ChatResponse,
   ChatSession,
   ChunkDetail,
+  CompletionStatus,
   DebugSearchResponse,
+  Grounding,
   QueryMode,
   Source,
 } from "@/lib/types"
 
 type ChatSectionProps = {
   token: string
+}
+
+const completionStatusMessages: Record<
+  Exclude<CompletionStatus, "complete">,
+  string
+> = {
+  truncated: "Output limit reached. This answer may be incomplete.",
+  interrupted: "Generation stopped before the answer was complete.",
+  invalid: "The model response was invalid. This answer may be incomplete.",
+}
+
+export function AssistantCompletionNotice({
+  status,
+}: {
+  status?: CompletionStatus
+}) {
+  if (!status || status === "complete") return null
+
+  return (
+    <Badge
+      role="status"
+      className="mb-2 h-auto text-left leading-5 whitespace-normal"
+      variant="secondary"
+    >
+      {completionStatusMessages[status]}
+    </Badge>
+  )
+}
+
+export function AssistantGroundingBadge({
+  grounding,
+  sourceCount,
+}: {
+  grounding: Grounding
+  sourceCount: number
+}) {
+  const isRejected =
+    grounding.status === "rejected_uncited" ||
+    grounding.status === "rejected_incomplete"
+
+  return (
+    <div className="mb-2">
+      <Badge
+        variant={
+          grounding.status === "cited"
+            ? "default"
+            : isRejected
+              ? "destructive"
+              : "secondary"
+        }
+      >
+        {grounding.status === "cited"
+          ? `Cited: ${grounding.citations_found.join(", ")}`
+          : grounding.status === "rejected_uncited"
+            ? "Uncited: rejected"
+            : grounding.status === "rejected_incomplete"
+              ? "Incomplete answer: rejected by citation verification"
+              : grounding.status === "uncited"
+                ? "Uncited"
+                : sourceCount
+                  ? `${sourceCount} sources`
+                  : "No sources"}
+      </Badge>
+    </div>
+  )
 }
 
 export function ChatSection({ token }: ChatSectionProps) {
@@ -308,6 +375,7 @@ export function ChatSection({ token }: ChatSectionProps) {
           id: makeId(),
           role: "assistant",
           content: body.answer,
+          completion_status: body.completion_status,
           sources: body.sources,
           grounding: body.grounding,
           metrics: body.metrics,
@@ -585,37 +653,23 @@ export function ChatSection({ token }: ChatSectionProps) {
                     <Bubble
                       className={
                         message.role === "user"
-                          ? "max-w-[82%] break-words bg-primary p-3 text-sm text-primary-foreground"
-                          : "max-w-[88%] break-words border bg-background p-3 text-sm"
+                          ? "max-w-[82%] bg-primary p-3 text-sm break-words text-primary-foreground"
+                          : "max-w-[88%] border bg-background p-3 text-sm break-words"
                       }
                     >
                       {message.role === "assistant" && message.grounding ? (
-                        <div className="mb-2">
-                          <Badge
-                            variant={
-                              message.grounding.status === "cited"
-                                ? "default"
-                                : message.grounding.status ===
-                                    "rejected_uncited"
-                                  ? "destructive"
-                                  : "secondary"
-                            }
-                          >
-                            {message.grounding.status === "cited"
-                              ? `Cited: ${message.grounding.citations_found.join(", ")}`
-                              : message.grounding.status ===
-                                  "rejected_uncited"
-                                ? "Uncited: rejected"
-                                : message.grounding.status === "uncited"
-                                  ? "Uncited"
-                                  : message.sources?.length
-                                    ? `${message.sources.length} sources`
-                                    : "No sources"}
-                          </Badge>
-                        </div>
+                        <AssistantGroundingBadge
+                          grounding={message.grounding}
+                          sourceCount={message.sources?.length ?? 0}
+                        />
                       ) : null}
                       {message.role === "assistant" ? (
-                        <AssistantRichText content={message.content} />
+                        <>
+                          <AssistantCompletionNotice
+                            status={message.completion_status}
+                          />
+                          <AssistantRichText content={message.content} />
+                        </>
                       ) : (
                         <p className="leading-6 break-words whitespace-pre-wrap">
                           {message.content}

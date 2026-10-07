@@ -1,5 +1,6 @@
 import re
 import uuid
+from typing import Literal
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.security import OAuth2PasswordRequestForm
@@ -81,6 +82,7 @@ class ChatResponse(BaseModel):
     sources: list[Source]
     grounding: dict
     metrics: dict | None = None
+    completion_status: Literal["complete", "truncated", "interrupted", "invalid"] = "complete"
 
 
 class GroupSummary(BaseModel):
@@ -572,17 +574,22 @@ def get_session_messages(
         sync_connection=db_conn
     )
 
-    messages = history.messages
-    return [
-        {
+    messages = []
+    for i, msg in enumerate(history.messages):
+        additional = getattr(msg, "additional_kwargs", {})
+        entry = {
             "id": f"msg-{i}",
             "role": "user" if getattr(msg, "type", "") == "human" else "assistant",
             "content": getattr(msg, "content", ""),
-            "sources": getattr(msg, "additional_kwargs", {}).get("sources", []),
-            "grounding": getattr(msg, "additional_kwargs", {}).get("grounding", {})
+            "sources": additional.get("sources", []),
+            "grounding": additional.get("grounding", {}),
         }
-        for i, msg in enumerate(messages)
-    ]
+        if additional.get("completion_status") in {
+            "complete", "truncated", "interrupted", "invalid"
+        }:
+            entry["completion_status"] = additional["completion_status"]
+        messages.append(entry)
+    return messages
 
 
 @router.post("/upload")
@@ -697,10 +704,17 @@ def chat(
     if trimmed and getattr(trimmed[0], "type", "") != "human":
         trimmed = trimmed[1:]
 
-    formatted_history = "\n".join([
-        f"User: {m.content}" if getattr(m, "type", "") == "human" else f"Assistant: {m.content}"
+    formatted_history = "\n".join(
+        f"User: {m.content}"
+        if getattr(m, "type", "") == "human"
+        else (
+            f"Assistant (incomplete response): {m.content}"
+            if getattr(m, "additional_kwargs", {}).get("completion_status")
+            in {"truncated", "interrupted", "invalid"}
+            else f"Assistant: {m.content}"
+        )
         for m in trimmed
-    ])
+    )
 
     try:
         direct_answer = small_talk_answer(payload.query)
@@ -711,7 +725,8 @@ def chat(
                 content=direct_answer,
                 additional_kwargs={
                     "sources": [],
-                    "grounding": grounding
+                    "grounding": grounding,
+                    "completion_status": "complete",
                 }
             ))
             return ChatResponse(
@@ -721,6 +736,7 @@ def chat(
                 sources=[],
                 grounding=grounding,
                 metrics=None,
+                completion_status="complete",
             )
 
         if payload.expand_query:
@@ -771,13 +787,27 @@ def chat(
         citations = llm_result["citations"]
         insufficient = llm_result["insufficient"]
         metrics = llm_result.get("metrics")
+        completion_status = llm_result.get("completion_status", "complete")
+        if completion_status not in {"complete", "truncated", "interrupted", "invalid"}:
+            raise ValueError("LLM returned an invalid completion status")
 
         # Filter valid citations
         valid_cites = sorted({
             int(c) for c in citations if 1 <= int(c) <= len(sources)
         })
 
-        if payload.require_citations and (insufficient or not valid_cites):
+        if payload.require_citations and completion_status != "complete":
+            raw_answer = answer
+            answer = "I couldn't complete a verifiable answer. Please try again."
+            grounding = grounding_status(
+                sources,
+                payload.require_citations,
+                [],
+                False,
+                raw_answer=raw_answer,
+            )
+            grounding["status"] = "rejected_incomplete"
+        elif payload.require_citations and (insufficient or not valid_cites):
             raw_answer = answer
             answer = "I don't have enough information in the provided documents."
             grounding = grounding_status(
@@ -801,7 +831,8 @@ def chat(
             content=answer,
             additional_kwargs={
                 "sources": [s.model_dump() for s in sources],
-                "grounding": grounding
+                "grounding": grounding,
+                "completion_status": completion_status,
             }
         ))
     except Exception as e:
@@ -814,6 +845,7 @@ def chat(
         sources=sources,
         grounding=grounding,
         metrics=metrics,
+        completion_status=completion_status,
     )
 
 

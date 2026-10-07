@@ -207,6 +207,7 @@ sequenceDiagram
 7. **LLM Generation with Guided Decoding**:
    - The prompt is built using the model's native chat template (via `AutoTokenizer.apply_chat_template`).
    - The system instructions require the LLM to use *only* the retrieved context and forbid external speculation.
+   - The API leaves the gRPC output-token cap unset for both answers and search-question generation. vLLM can use the context capacity remaining after the prompt, or stop earlier at an end-of-sequence token. `VLLM_MAX_MODEL_LEN` limits the combined prompt and completion context at the model server.
    - **Guided JSON Decoding**: vLLM is instructed via `json_schema` to return strict structured JSON:
      - `answer` (string): The plain user-facing answer.
      - `citations` (array of integers): Indices of the sources that support the answer.
@@ -216,7 +217,8 @@ sequenceDiagram
    - If `require_citations=True` and the model produced no valid citations or flagged `insufficient=true`, the API overrides the response with *"I don't have enough information in the provided documents."* while storing the raw answer in `grounding.raw_answer` for inspection.
 9. **History Persistence & Response**:
    - Both user and assistant turns, along with the source chunks and grounding metadata, are saved to PostgreSQL.
-   - The API returns the answer, source list (with snippets and scores), grounding status, and token metrics (TPS, prompt tokens, completion tokens).
+   - The API returns the answer, source list (with snippets and scores), grounding status, completion status, and token metrics (TPS, prompt tokens, completion tokens). Completion status is `complete`, `truncated`, `interrupted`, or `invalid`; non-complete status is persisted and shown as an inline UI notice both immediately and after history reload.
+   - For a non-complete generation, the server may retain a safely decoded top-level answer prefix from malformed JSON, but it does not invent citations. If it cannot recover answer text, it uses a short fallback. Citation enforcement rejects incomplete output with a distinct verifiability fallback and keeps the non-complete status. Later prompts are told that such assistant history is incomplete.
 
 ---
 

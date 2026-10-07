@@ -79,6 +79,7 @@ If yes, update the matching docs in the same change.
 - `/chat` bypasses retrieval for simple greetings.
 - `/chat` can generate up to five search questions before retrieval; the web setting defaults on. Apply `limit` per question, merge unique chunks before the final answer prompt, preserve the original user query for that prompt, and fall back to direct-query retrieval if question generation fails or yields no usable questions. This adds an LLM call and may increase latency and context size; `/debug/search` and MCP search remain direct-query flows.
 - `/chat` supports request-level citation enforcement; keep it off by default unless the UI/request enables it.
+- `/chat` persists `completion_status` (`complete`, `truncated`, `interrupted`, `invalid`) with assistant turns. Incomplete output may include only a safely decoded answer prefix and never inferred citations; keep the UI notice visible after history reload and mark incomplete assistant history in subsequent prompts. The API sets no separate output limit, so the completion can use context capacity remaining after the prompt; `VLLM_MAX_MODEL_LEN` in `llm/.env` limits that combined prompt/completion context.
 - vLLM prompts should use tokenizer chat templates when available, not hard-coded per-model templates.
 - Group/file CRUD endpoints delete LanceDB chunk rows permanently.
 - Re-uploading the same filename creates a new `file_id`.

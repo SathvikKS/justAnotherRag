@@ -32,7 +32,7 @@ The root workspace environment is intentionally kept Windows-compatible for `api
 
 ## Environment
 
-Each service owns its env file. Copy the service `.env.example` to `.env` inside the service directory you run from. The API and ingestion entrypoints load their own service `.env` before shared settings are resolved, so `api/.env` and `ingestion/.env` remain the source of truth for `LANCEDB_URI`.
+Each service owns its env file. Copy the service `.env.example` to `.env` inside the service directory you run from. The API and ingestion entrypoints load their own service `.env` before shared settings are resolved, so `api/.env` and `ingestion/.env` remain the source of truth for `LANCEDB_URI`. Set `VLLM_MAX_MODEL_LEN` in `llm/.env` to cap the combined prompt and completion context window when needed.
 
 Important defaults:
 
@@ -208,6 +208,7 @@ Services:
 
 Docker defaults to `Qwen/Qwen2.5-3B-Instruct`. Override with `LLM_MODEL`.
 `VLLM_GPU_MEMORY_UTIL` defaults to `0.88` and is passed to vLLM as `--gpu-memory-utilization`; lower it to reserve less VRAM for vLLM KV cache and CUDA graph pools on smaller GPUs. `VLLM_MAX_MODEL_LEN` is passed as `--max-model-len` when set. Use `16384` for Qwen3-4B on a 16GB GPU when the native 40960-token context does not fit the remaining KV cache.
+The API does not impose a separate output-token cap for answers or search-question generation. vLLM may generate up to the remaining context capacity (`max_model_len` minus prompt tokens), or stop earlier at an end-of-sequence token. If generation reaches the context boundary, chat history records the incomplete status and the UI displays any safely recovered answer text with a notice.
 
 ## API
 
