@@ -1,0 +1,146 @@
+{
+  "version": 1,
+  "name": "rag",
+  "root": ".",
+  "defaults": {
+    "profile": "all"
+  },
+  "profiles": {
+    "all": {
+      "services": [
+        "embedding",
+        "llm-mock",
+        "ingestion",
+        "api",
+        "web"
+      ]
+    },
+    "gpu": {
+      "services": [
+        "embedding",
+        "llm",
+        "ingestion",
+        "api",
+        "web"
+      ]
+    }
+  },
+  "services": {
+    "embedding": {
+      "name": "Embedding",
+      "cwd": "${project.root}/embedding",
+      "command": ["uv", "run", "python", "-m", "rag_embedding.server"],
+      "env": {
+        "PYTHONUNBUFFERED": "1"
+      },
+      "env_files": ["${project.root}/embedding/.env"],
+      "ports": [50051],
+      "shutdown": {
+        "signal": "interrupt",
+        "timeout": "10s"
+      }
+    },
+    "llm-mock": {
+      "name": "LLM mock",
+      "cwd": "${project.root}/llm",
+      "command": ["uv", "run", "python", "-m", "rag_llm.mock_server"],
+      "env": {
+        "PYTHONUNBUFFERED": "1"
+      },
+      "env_files": ["${project.root}/llm/.env"],
+      "ports": [50052],
+      "shutdown": {
+        "signal": "interrupt",
+        "timeout": "10s"
+      }
+    },
+    "llm": {
+      "name": "LLM",
+      "cwd": "${project.root}/llm",
+      "command": ["uv", "run", "python", "-m", "rag_llm.serve"],
+      "env": {
+        "PYTHONUNBUFFERED": "1"
+      },
+      "env_files": ["${project.root}/llm/.env"],
+      "ports": [50052],
+      "shutdown": {
+        "signal": "interrupt",
+        "timeout": "15s"
+      }
+    },
+    "ingestion": {
+      "name": "Ingestion",
+      "cwd": "${project.root}/ingestion",
+      "command": [
+        "uv",
+        "run",
+        "celery",
+        "-A",
+        "rag_ingestion.tasks.celery_app",
+        "worker",
+        "--loglevel=info",
+        "--pool=solo"
+      ],
+      "env": {
+        "PYTHONUNBUFFERED": "1"
+      },
+      "env_files": ["${project.root}/ingestion/.env"],
+      "shutdown": {
+        "signal": "interrupt",
+        "timeout": "15s"
+      }
+    },
+    "api": {
+      "name": "API",
+      "cwd": "${project.root}/api",
+      "command": [
+        "uv",
+        "run",
+        "uvicorn",
+        "rag_api.app:app",
+        "--reload",
+        "--reload-dir",
+        "src",
+        "--reload-dir",
+        "../packages",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "${port}"
+      ],
+      "env": {
+        "PYTHONUNBUFFERED": "1"
+      },
+      "env_files": ["${project.root}/api/.env"],
+      "ports": [8000],
+      "shutdown": {
+        "signal": "interrupt",
+        "timeout": "10s"
+      }
+    },
+    "web": {
+      "name": "Web",
+      "cwd": "${project.root}/rag-web",
+      "pre_start": [
+        {
+          "name": "npm install",
+          "command": ["npm", "i"]
+        }
+      ],
+      "command": [
+        "npm",
+        "run",
+        "dev",
+        "--",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "${port}",
+        "--strictPort",
+        "--clearScreen",
+        "false"
+      ],
+      "ports": [5175]
+    }
+  }
+}
