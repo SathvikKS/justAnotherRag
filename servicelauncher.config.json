@@ -3,33 +3,118 @@
   "name": "rag",
   "root": ".",
   "defaults": {
-    "profile": "all"
+    "profile": "cpu",
+    "parallel_start": false
   },
   "profiles": {
-    "all": {
+    "cpu": {
       "services": [
-        "embedding",
-        "llm-mock",
-        "ingestion",
-        "api",
-        "web"
+        "llm-cpu",
+        "embedding-cpu",
+        "ingestion-cpu",
+        "api-cpu",
+        "web-cpu"
       ]
     },
     "gpu": {
       "services": [
-        "embedding",
-        "llm",
-        "ingestion",
-        "api",
-        "web"
+        "llm-gpu",
+        "embedding-gpu",
+        "ingestion-gpu",
+        "api-gpu",
+        "web-gpu"
+      ]
+    },
+    "all": {
+      "services": [
+        "llm-cpu",
+        "embedding-cpu",
+        "ingestion-cpu",
+        "api-cpu",
+        "web-cpu"
       ]
     }
   },
   "services": {
-    "embedding": {
+    "embedding-cpu": {
       "name": "Embedding",
       "cwd": "${project.root}/embedding",
-      "command": ["uv", "run", "python", "-m", "rag_embedding.server"],
+      "command": ["uv", "run", "--no-sync", "python", "-m", "rag_embedding.server"],
+      "env": {
+        "PYTHONUNBUFFERED": "1",
+        "CUDA_VISIBLE_DEVICES": ""
+      },
+      "env_files": ["${project.root}/embedding/.env"],
+      "ports": [50051],
+      "shutdown": {
+        "signal": "interrupt",
+        "timeout": "10s"
+      }
+    },
+    "llm-cpu": {
+      "name": "LLM mock",
+      "cwd": "${project.root}/llm",
+      "pre_start": [
+        {
+          "name": "sync cpu extra",
+          "command": [
+            "uv",
+            "sync",
+            "--all-packages",
+            "--extra",
+            "cpu",
+            "--inexact",
+            "--index-strategy",
+            "unsafe-best-match"
+          ]
+        }
+      ],
+      "command": ["uv", "run", "--no-sync", "python", "-m", "rag_llm.mock_server"],
+      "env": {
+        "PYTHONUNBUFFERED": "1",
+        "LLM_PROVIDER": "mock"
+      },
+      "env_files": ["${project.root}/llm/.env"],
+      "ports": [50052],
+      "shutdown": {
+        "signal": "interrupt",
+        "timeout": "10s"
+      }
+    },
+    "llm-gpu": {
+      "name": "LLM",
+      "cwd": "${project.root}/llm",
+      "pre_start": [
+        {
+          "name": "sync gpu extra",
+          "command": [
+            "uv",
+            "sync",
+            "--all-packages",
+            "--extra",
+            "gpu",
+            "--inexact",
+            "--index-strategy",
+            "unsafe-best-match"
+          ]
+        }
+      ],
+      "command": ["uv", "run", "--no-sync", "python", "-m", "rag_llm.serve"],
+      "env": {
+        "PYTHONUNBUFFERED": "1",
+        "LLM_PROVIDER": "vllm"
+      },
+      "env_files": ["${project.root}/llm/.env"],
+      "ports": [50052],
+      "shutdown": {
+        "signal": "interrupt",
+        "timeout": "15s"
+      }
+    },
+    "embedding-gpu": {
+      "name": "Embedding",
+      "cwd": "${project.root}/embedding",
+      "command": ["uv", "run", "--no-sync", "python", "-m", "rag_embedding.server"],
       "env": {
         "PYTHONUNBUFFERED": "1"
       },
@@ -40,40 +125,13 @@
         "timeout": "10s"
       }
     },
-    "llm-mock": {
-      "name": "LLM mock",
-      "cwd": "${project.root}/llm",
-      "command": ["uv", "run", "python", "-m", "rag_llm.mock_server"],
-      "env": {
-        "PYTHONUNBUFFERED": "1"
-      },
-      "env_files": ["${project.root}/llm/.env"],
-      "ports": [50052],
-      "shutdown": {
-        "signal": "interrupt",
-        "timeout": "10s"
-      }
-    },
-    "llm": {
-      "name": "LLM",
-      "cwd": "${project.root}/llm",
-      "command": ["uv", "run", "python", "-m", "rag_llm.serve"],
-      "env": {
-        "PYTHONUNBUFFERED": "1"
-      },
-      "env_files": ["${project.root}/llm/.env"],
-      "ports": [50052],
-      "shutdown": {
-        "signal": "interrupt",
-        "timeout": "15s"
-      }
-    },
-    "ingestion": {
+    "ingestion-gpu": {
       "name": "Ingestion",
       "cwd": "${project.root}/ingestion",
       "command": [
         "uv",
         "run",
+        "--no-sync",
         "celery",
         "-A",
         "rag_ingestion.tasks.celery_app",
@@ -90,12 +148,37 @@
         "timeout": "15s"
       }
     },
-    "api": {
+    "ingestion-cpu": {
+      "name": "Ingestion",
+      "cwd": "${project.root}/ingestion",
+      "command": [
+        "uv",
+        "run",
+        "--no-sync",
+        "celery",
+        "-A",
+        "rag_ingestion.tasks.celery_app",
+        "worker",
+        "--loglevel=info",
+        "--pool=solo"
+      ],
+      "env": {
+        "PYTHONUNBUFFERED": "1",
+        "CUDA_VISIBLE_DEVICES": ""
+      },
+      "env_files": ["${project.root}/ingestion/.env"],
+      "shutdown": {
+        "signal": "interrupt",
+        "timeout": "15s"
+      }
+    },
+    "api-cpu": {
       "name": "API",
       "cwd": "${project.root}/api",
       "command": [
         "uv",
         "run",
+        "--no-sync",
         "uvicorn",
         "rag_api.app:app",
         "--reload",
@@ -109,7 +192,9 @@
         "${port}"
       ],
       "env": {
-        "PYTHONUNBUFFERED": "1"
+        "PYTHONUNBUFFERED": "1",
+        "LLM_PROVIDER": "mock",
+        "LLM_GRPC_URL": "localhost:50052"
       },
       "env_files": ["${project.root}/api/.env"],
       "ports": [8000],
@@ -118,7 +203,62 @@
         "timeout": "10s"
       }
     },
-    "web": {
+    "api-gpu": {
+      "name": "API",
+      "cwd": "${project.root}/api",
+      "command": [
+        "uv",
+        "run",
+        "--no-sync",
+        "uvicorn",
+        "rag_api.app:app",
+        "--reload",
+        "--reload-dir",
+        "src",
+        "--reload-dir",
+        "../packages",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "${port}"
+      ],
+      "env": {
+        "PYTHONUNBUFFERED": "1",
+        "LLM_PROVIDER": "vllm",
+        "LLM_GRPC_URL": "localhost:50052"
+      },
+      "env_files": ["${project.root}/api/.env"],
+      "ports": [8000],
+      "shutdown": {
+        "signal": "interrupt",
+        "timeout": "10s"
+      }
+    },
+    "web-cpu": {
+      "name": "Web",
+      "cwd": "${project.root}/rag-web",
+      "pre_start": [
+        {
+          "name": "npm install",
+          "command": ["npm", "i"]
+        }
+      ],
+      "command": [
+        "npm",
+        "run",
+        "dev",
+        "--",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "${port}",
+        "--strictPort",
+        "--clearScreen",
+        "false"
+      ],
+      "ports": [5175]
+    },
+    "web-gpu": {
       "name": "Web",
       "cwd": "${project.root}/rag-web",
       "pre_start": [
@@ -142,5 +282,6 @@
       ],
       "ports": [5175]
     }
-  }
+  },
+  "env_files": ["${project.root}/.env"]
 }

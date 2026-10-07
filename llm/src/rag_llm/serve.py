@@ -17,20 +17,25 @@ def main() -> None:
             "`uv sync --extra mock && uv run python -m rag_llm.mock_server`."
         )
 
+    env = os.environ.copy()
+    gpu_memory_util = env.pop("VLLM_GPU_MEMORY_UTIL", "0.88")
+    max_model_len = env.pop("VLLM_MAX_MODEL_LEN", "").strip()
     cmd = [
         sys.executable,
         "-m",
         "vllm.entrypoints.grpc_server",
         "--host",
-        os.getenv("LLM_GRPC_HOST", "0.0.0.0"),
+        env.get("LLM_GRPC_HOST", "0.0.0.0"),
         "--port",
-        os.getenv("LLM_GRPC_PORT", "50052"),
+        env.get("LLM_GRPC_PORT", "50052"),
         "--model",
-        os.getenv("LLM_MODEL", "Qwen/Qwen2.5-3B-Instruct"),
+        env.get("LLM_MODEL", "Qwen/Qwen2.5-3B-Instruct"),
         "--gpu-memory-utilization",
-        os.getenv("VLLM_GPU_MEMORY_UTIL", "0.88"),
+        gpu_memory_util,
     ]
-    subprocess.run(cmd, check=True)
+    if max_model_len:
+        cmd.extend(["--max-model-len", max_model_len])
+    subprocess.run(cmd, check=True, env=env)
 
 
 if __name__ == "__main__":

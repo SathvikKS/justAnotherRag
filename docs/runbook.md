@@ -37,6 +37,7 @@ LLM_GRPC_URL=localhost:50052
 LLM_MODEL=Qwen/Qwen2.5-3B-Instruct
 LLM_MAX_TOKENS=512
 VLLM_GPU_MEMORY_UTIL=0.88
+VLLM_MAX_MODEL_LEN=16384
 CELERY_BROKER_URL=redis://localhost:6379/0
 CELERY_RESULT_BACKEND=redis://localhost:6379/0
 API_KEY=dev-api-key
@@ -104,12 +105,15 @@ uv run python -m rag_llm.serve
 
 LLM CPU (Linux/WSL2):
 
-```powershell
+```bash
 cd llm
-copy .env.example .env
-VLLM_TARGET_DEVICE=cpu uv sync --extra cpu --torch-backend cpu
-uv run python -m rag_llm.serve
+cp .env.example .env
+export VLLM_TARGET_DEVICE=cpu
+uv sync --extra cpu --index-strategy unsafe-best-match
+uv run --no-sync python -m rag_llm.serve
 ```
+
+ServiceLauncher uses two runtime profiles. `cpu` is the default: it pre-syncs the CPU extra, starts `llm-cpu` for mock responses, and then runs the real `embedding-cpu`, `ingestion-cpu`, `api-cpu`, and `web-cpu` services. `gpu` pre-syncs `uv sync --all-packages --extra gpu --inexact --index-strategy unsafe-best-match` through `llm-gpu`, then starts the real embedding, ingestion, API, and web services with `uv run --no-sync`. The `all` entry is a compatibility alias for the CPU service set because the profile-specific services share ports. Keep startup sequential so the profile sync completes before the other services start. Re-import `servicelauncher.config.json` after changing it.
 
 The `llm/pyproject.toml` extras route `vllm` to the vLLM wheel index and route `torch`, `torchvision`, and `torchaudio` together to the matching PyTorch index:
 
@@ -118,7 +122,7 @@ The `llm/pyproject.toml` extras route `vllm` to the vLLM wheel index and route `
 
 Keep those PyTorch-family packages aligned. A fresh `uv sync --reinstall` can otherwise pull a mismatched CUDA build such as `torch==...+cu129` with `torchvision` or `torchaudio` built for CUDA 13.x, which breaks vLLM startup during import.
 
-The gRPC server defaults to `Qwen/Qwen2.5-3B-Instruct`; override with `LLM_MODEL`. `VLLM_GPU_MEMORY_UTIL` defaults to `0.88` and maps to vLLM `--gpu-memory-utilization`; lower it to reduce VRAM reserved for KV cache/CUDA graph pools, or raise it only if the GPU has enough headroom.
+The gRPC server defaults to `Qwen/Qwen2.5-3B-Instruct`; override with `LLM_MODEL`. `VLLM_GPU_MEMORY_UTIL` defaults to `0.88` and maps to vLLM `--gpu-memory-utilization`; lower it to reduce VRAM reserved for KV cache/CUDA graph pools, or raise it only if the GPU has enough headroom. `VLLM_MAX_MODEL_LEN` maps to `--max-model-len`. Set it when the model's native context does not fit the KV cache left after weights load. For Qwen3-4B on a 16GB GPU at `0.75` utilization, `16384` fits; vLLM reported that 40960 needs about 5.62 GiB and only about 3.68 GiB was available.
 
 On Windows, use WSL2, Docker CPU mode, or the mock server for local LLM work.
 

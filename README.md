@@ -51,6 +51,7 @@ LLM_PROVIDER=mock
 LLM_GRPC_URL=localhost:50052
 LLM_MODEL=Qwen/Qwen2.5-3B-Instruct
 VLLM_GPU_MEMORY_UTIL=0.88
+VLLM_MAX_MODEL_LEN=16384
 CELERY_BROKER_URL=redis://localhost:6379/0
 CELERY_RESULT_BACKEND=redis://localhost:6379/0
 API_KEY=dev-api-key
@@ -140,13 +141,21 @@ LLM GPU (Linux/WSL2):
 
 The `llm/pyproject.toml` extras intentionally route `torch`, `torchvision`, and `torchaudio` to the same PyTorch index so fresh `uv sync --reinstall` runs do not mix CUDA 12.9 and CUDA 13.x wheels.
 
+The ServiceLauncher config has two runtime profiles, with `cpu` selected by default. Its `all` entry is a compatibility alias for the CPU service set because the profile-specific services share ports:
+
+- `cpu` starts `llm-cpu`, which returns mock responses, then starts the real `embedding-cpu`, `ingestion-cpu`, `api-cpu`, and `web-cpu` services. Its pre-start sync selects the CPU dependency extra, and the CPU embedding/ingestion services hide CUDA with `CUDA_VISIBLE_DEVICES`.
+- `gpu` starts the real `llm-gpu`, `embedding-gpu`, `ingestion-gpu`, `api-gpu`, and `web-gpu` services. Its pre-start sync selects the CUDA 12.9 dependency extra before the remaining services use `uv run --no-sync`.
+
+Use `servicelauncher --profile gpu` to select the GPU profile for a session. Keep profile startup sequential so the dependency sync completes before the `--no-sync` services start. Re-import `servicelauncher.config.json` after editing it.
+
 LLM CPU (Linux/WSL2):
 
 ```bash
 cd llm
 cp .env.example .env
-VLLM_TARGET_DEVICE=cpu uv sync --extra cpu --torch-backend cpu
-uv run --extra cpu python -m rag_llm.serve
+export VLLM_TARGET_DEVICE=cpu
+uv sync --extra cpu --index-strategy unsafe-best-match
+uv run --no-sync python -m rag_llm.serve
 ```
 
 LLM mock:
@@ -194,7 +203,7 @@ Services:
 - vLLM gRPC: `localhost:50052`
 
 Docker defaults to `Qwen/Qwen2.5-3B-Instruct`. Override with `LLM_MODEL`.
-`VLLM_GPU_MEMORY_UTIL` defaults to `0.88` and is passed to vLLM as `--gpu-memory-utilization`; lower it to reserve less VRAM for vLLM KV cache and CUDA graph pools on smaller GPUs.
+`VLLM_GPU_MEMORY_UTIL` defaults to `0.88` and is passed to vLLM as `--gpu-memory-utilization`; lower it to reserve less VRAM for vLLM KV cache and CUDA graph pools on smaller GPUs. `VLLM_MAX_MODEL_LEN` is passed as `--max-model-len` when set. Use `16384` for Qwen3-4B on a 16GB GPU when the native 40960-token context does not fit the remaining KV cache.
 
 ## API
 

@@ -85,7 +85,7 @@ Settings:
 - `LANCEDB_URI`, `LANCEDB_TABLE`
 - `EMBEDDING_MODEL`, `EMBEDDING_GRPC_URL`
 - `DOCLING_OCR_ENABLED`, `DOCLING_OCR_ENGINE`, `DOCLING_OCR_LANGS`, `DOCLING_RAPIDOCR_BACKEND`, `DOCLING_FORCE_BACKEND_TEXT`, `DOCLING_WARMUP_ENABLED`
-- `LLM_GRPC_URL`, `LLM_MODEL`, `LLM_MAX_TOKENS`, `VLLM_GPU_MEMORY_UTIL`
+- `LLM_GRPC_URL`, `LLM_MODEL`, `LLM_MAX_TOKENS`, `VLLM_GPU_MEMORY_UTIL`, `VLLM_MAX_MODEL_LEN`
 - `CELERY_BROKER_URL`, `CELERY_RESULT_BACKEND`
 - `API_KEY`
 - `CORS_ORIGINS`
@@ -93,9 +93,11 @@ Settings:
 
 `EMBEDDING_MODEL` must produce 384-dimensional vectors unless the LanceDB schema is changed. The current implementation still uses `BAAI/bge-small-en-v1.5`, now through LangChain's Hugging Face embeddings wrapper, to keep query and indexed vectors compatible.
 
-`VLLM_GPU_MEMORY_UTIL` is read by `llm/src/rag_llm/serve.py` and passed to vLLM as `--gpu-memory-utilization`; the default is `0.88`.
+`VLLM_GPU_MEMORY_UTIL` is read by `llm/src/rag_llm/serve.py` and passed to vLLM as `--gpu-memory-utilization`; the default is `0.88`. `VLLM_MAX_MODEL_LEN`, when set, is passed as `--max-model-len`. Leave it unset to use the model's native context length. On a 16GB GPU, Qwen3-4B's native 40960-token length needs more KV cache than utilization `0.75` leaves (about 3.7 GiB); `16384` fits that budget. Both launcher variables are removed from the vLLM process environment so vLLM does not warn about unknown `VLLM_*` names.
 
 Local services read `.env` from their own service directory. API and ingestion preload `api/.env` or `ingestion/.env` before shared `rag_core.config` settings are constructed, which avoids falling back to package defaults when those services import shared code. Compose uses the same files via `env_file` and overrides container-only hostnames. Keep Redis URLs aligned between `api/.env` and `ingestion/.env`; examples live beside each service.
+
+ServiceLauncher has `cpu` and `gpu` runtime profiles. The default `cpu` profile syncs the CPU dependency extra, serves mock LLM responses through `llm-cpu`, and runs real embedding, ingestion, API, and web services. The `gpu` profile syncs the CUDA 12.9 extra before starting the real `llm-gpu`, `embedding-gpu`, `ingestion-gpu`, `api-gpu`, and `web-gpu` services. An `all` compatibility alias points to the CPU service set so duplicate ports across profile-specific services do not create an invalid implicit all-services profile. Profile-specific service IDs keep the two dependency/runtime sets isolated; both profiles use the same local ports and must be started sequentially because the model sync is a pre-start step.
 
 ## LanceDB
 
