@@ -11,7 +11,7 @@ This is the current implemented architecture.
 - `packages/rag_core`: settings and shared interfaces.
 - `packages/rag_storage`: LanceDB schema, upsert, FTS index, hybrid search.
 - `packages/rag_grpc`: embedding gRPC service/client and vLLM client shim.
-- `rag-web`: Vite React client.
+- `rag-web`: Vite React client. Group state is managed globally across routes via `GroupProvider` (`useGroup`), persisting selected group and locally-created groups in `localStorage`. The `GroupField` component presents an accessible select dropdown displaying available groups with file counts and provides a creation button on the right to add new groups via a modal dialog.
 
 Root `pyproject.toml` is a uv workspace for the service apps and shared packages.
 

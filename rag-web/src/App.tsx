@@ -12,6 +12,7 @@ import { Loader2, Lock, TriangleAlert } from "lucide-react"
 import { ChatSection } from "@/components/chat/chat-section"
 import { AppDashboard } from "@/components/layout/app-dashboard"
 import { UploadSection } from "@/components/upload/upload-section"
+import { GroupProvider } from "@/context/group-context"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -57,7 +58,11 @@ function AuthenticatedLayout() {
     auth.logout()
   }
 
-  return <AppDashboard username={auth.username} onLogout={handleLogout} />
+  return (
+    <GroupProvider>
+      <AppDashboard username={auth.username} onLogout={handleLogout} />
+    </GroupProvider>
+  )
 }
 
 function UploadPage() {

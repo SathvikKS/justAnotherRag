@@ -54,12 +54,18 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 import { API_BASE_URL, DONE_STATES, GROUP_ID_REGEX, readError } from "@/lib/api"
+import { useGroup } from "@/context/group-context"
 import { formatBytes } from "@/lib/format"
 import { showErrorToast, showSuccessToast } from "@/lib/toast"
 import type { FileSummary, GroupSummary, TaskStatus } from "@/lib/types"
 
 export function UploadSection() {
-  const [groupId, setGroupId] = React.useState("demo")
+  const {
+    groupId,
+    setGroupId,
+    refreshGroups: refreshAllGroups,
+    removeGroup,
+  } = useGroup()
   interface UploadItem {
     id: string
     file: File
@@ -67,7 +73,7 @@ export function UploadSection() {
     taskStatus: TaskStatus | null
     uploadError: string | null
     progress: number
-    state: "idle" | "queued" | "uploading" | "processing" | "error"
+    state: "idle" | "queued" | "uploading" | "processing" | "error" | "done"
   }
 
   const [uploadItems, setUploadItems] = React.useState<UploadItem[]>([])
@@ -182,6 +188,7 @@ export function UploadSection() {
                   description: `${result.status.result?.chunks_indexed ?? 0} chunks from ${result.status.result?.filename ?? item.file.name}.`,
                 })
                 void refreshGroup()
+                void refreshAllGroups()
               } else if (
                 (nextState === "FAILURE" || nextState === "REVOKED") &&
                 previousState !== "FAILURE" &&
@@ -233,7 +240,7 @@ export function UploadSection() {
       cancelled = true
       if (timeoutId) window.clearTimeout(timeoutId)
     }
-  }, [activeTaskIds, refreshGroup])
+  }, [activeTaskIds, refreshGroup, refreshAllGroups])
 
   const uploadSingleItem = React.useCallback(
     (item: UploadItem, cleanGroupId: string) => {
@@ -440,6 +447,7 @@ export function UploadSection() {
       if (!response.ok) throw new Error(await readError(response))
       showSuccessToast("File deleted")
       await refreshGroup()
+      void refreshAllGroups()
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       setManagementError(message)
@@ -464,6 +472,7 @@ export function UploadSection() {
       if (!response.ok) throw new Error(await readError(response))
       setGroupSummary(null)
       setIndexedFiles([])
+      removeGroup(cleanGroupId)
       showSuccessToast("Group deleted")
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)

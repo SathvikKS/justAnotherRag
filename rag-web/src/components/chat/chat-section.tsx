@@ -10,6 +10,7 @@ import {
 
 import { GroupField } from "@/components/shared/group-field"
 import { highlightMatches } from "@/components/shared/highlight-matches"
+import { useGroup } from "@/context/group-context"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -49,7 +50,7 @@ type ChatSectionProps = {
 }
 
 export function ChatSection({ token }: ChatSectionProps) {
-  const [groupId, setGroupId] = React.useState("demo")
+  const { groupId, setGroupId } = useGroup()
   const [sessions, setSessions] = React.useState<ChatSession[]>([])
   const [currentSessionId, setCurrentSessionId] = React.useState<string | null>(
     null
@@ -239,7 +240,7 @@ export function ChatSection({ token }: ChatSectionProps) {
     let activeSessionId = currentSessionId
     if (queryMode === "chat") {
       if (!activeSessionId) {
-        activeSessionId = await createSession(cleanQuery.slice(0, 30))
+        activeSessionId = (await createSession(cleanQuery.slice(0, 30))) ?? null
         if (!activeSessionId) return
       }
 
